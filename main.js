@@ -25122,6 +25122,8 @@ var ExtendedPropertiesPlugin = class extends import_obsidian53.Plugin {
       await this.backupCorruptData();
     }
     this.settings = normalizeSettings(data, () => ({ version: 4, sections: [] }));
+    this.i18n.setLocale(resolveLocaleCode(this.settings.language));
+    this.i18n.setOverrides(this.settings.stringOverrides);
     this.rebuildRegistries();
     this.settings = normalizeSettings(data, () => this.defaultLayout());
     configureSound(this.settings.sound !== false, (_a = this.settings.soundVolume) != null ? _a : 0.3, {
@@ -25130,8 +25132,6 @@ var ExtendedPropertiesPlugin = class extends import_obsidian53.Plugin {
       crit: this.settings.soundCrit !== false
     });
     configureTabChain(() => this.settings.tabOpens !== false);
-    this.i18n.setLocale(resolveLocaleCode(this.settings.language));
-    this.i18n.setOverrides(this.settings.stringOverrides);
     configureRollUi(this.settings, () => void this.saveSettings());
     let migrated = false;
     for (const mod of FEATURE_MODULES) {

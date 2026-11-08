@@ -163,6 +163,10 @@ export default class ExtendedPropertiesPlugin extends Plugin {
       await this.backupCorruptData();
     }
     this.settings = normalizeSettings(data, () => ({ version: 4, sections: [] }));
+    // Pick the locale before the second normalization so default section
+    // presets are built in the user's language.
+    this.i18n.setLocale(resolveLocaleCode(this.settings.language));
+    this.i18n.setOverrides(this.settings.stringOverrides);
     this.rebuildRegistries();
     // Re-normalize so types missing a layout get the real default preset.
     this.settings = normalizeSettings(data, () => this.defaultLayout());
@@ -173,8 +177,6 @@ export default class ExtendedPropertiesPlugin extends Plugin {
     });
     // Read through, not copied: the setting can change without a reload.
     configureTabChain(() => this.settings.tabOpens !== false);
-    this.i18n.setLocale(resolveLocaleCode(this.settings.language));
-    this.i18n.setOverrides(this.settings.stringOverrides);
     // The roll summary's expandable settings panel edits live settings.
     configureRollUi(this.settings, () => void this.saveSettings());
 
