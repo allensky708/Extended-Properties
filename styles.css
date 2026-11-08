@@ -2053,6 +2053,27 @@ input.ep-edit-input.ep-fmt-chip, input.ep-edit-input.ep-fmt-card {
   box-shadow: none;
 }
 .ep-settings-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.ep-settings-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 6px;
+}
+.ep-settings-section-nav.ep-hidden { display: none; }
+.ep-settings-section-link {
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--ep-radius, 6px);
+  cursor: pointer;
+  box-shadow: none;
+}
+.ep-settings-section-link:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
 .ep-settings-tab.is-active {
   color: var(--text-on-accent);
   background: var(--interactive-accent);

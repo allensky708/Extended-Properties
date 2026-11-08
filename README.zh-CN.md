@@ -4,7 +4,7 @@
 
 > 一个数据驱动、可自由排布的属性侧边栏，把笔记元数据变成可交互的角色卡、资料面板或仪表盘。
 
-本仓库是 [electroluminescent/obsidian-extended-properties](https://github.com/electroluminescent/obsidian-extended-properties) 的简体中文本地化版本，基于上游 **4.72.0**，版本号 **4.72.2**。界面通过 i18n 字典实现中英双语，默认跟随 Obsidian 语言，也可以在设置中固定为中文或英文。
+本仓库是 [electroluminescent/obsidian-extended-properties](https://github.com/electroluminescent/obsidian-extended-properties) 的简体中文本地化版本，基于上游 **4.72.0**，版本号 **4.72.3**。界面通过 i18n 字典实现中英双语，默认跟随 Obsidian 语言，也可以在设置中固定为中文或英文。
 
 汉化与维护：[allensky708](https://github.com/allensky708)。原项目版权归 electroluminescent 所有，按 MIT 协议发布。
 

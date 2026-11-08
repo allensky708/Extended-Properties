@@ -18,7 +18,6 @@ import { compileFormula } from "../utils/formula";
 import { genId } from "../utils/misc";
 import { RefSuggest } from "./components/suggest";
 import { destructive, keepScroll } from "./components/setting-helpers";
-import { mountOptionsNav } from "./components/options-nav";
 import { ConfirmModal, TextPromptModal } from "./modals/dialogs";
 import { IconPickerModal } from "./modals/icon-picker";
 import { setTypedText, tintTypeNames, typedText, typeName } from "./components/type-label";
@@ -216,7 +215,6 @@ export class EPSettingTab extends PluginSettingTab {
       this.tabify();
       this.tint();
       this.alignLooseText();
-      this.mountNav();
       this.findPendingSection();
     };
     if (this.pendingInline || this.pendingPalette || this.pendingSection) build();
@@ -238,21 +236,6 @@ export class EPSettingTab extends PluginSettingTab {
     const title = this.plugin.i18n.t(want);
     this.inlineRow =
       this.host.findAll(".setting-item-heading").find((h) => (h.textContent ?? "").trim() === title) ?? null;
-  }
-
-  /**
-   * The headings of the OPEN tab, on a strip beside the settings window.
-   *
-   * Re-mounted whenever the tab changes: the tabs are the same nodes shown
-   * and hidden rather than a re-render, so nothing else would tell the strip
-   * that what it is describing has been put away. The filter box above
-   * already searches, so the strip is all that is added here.
-   */
-  private mountNav(): void {
-    mountOptionsNav(this.host, this.plugin.i18n, {
-      search: false,
-      beside: this.host.closest<HTMLElement>(".modal") ?? this.host,
-    });
   }
 
   /** Bring the row a note body asked for into view, and mark it briefly. */
@@ -350,6 +333,7 @@ export class EPSettingTab extends PluginSettingTab {
 
     // -- tabs -----------------------------------------------------------------
     const bar = chrome.createDiv({ cls: "ep-settings-tabs" });
+    const sectionNav = chrome.createDiv({ cls: "ep-settings-section-nav" });
     const active = groups.some((g) => g.title === this.activeTab) ? this.activeTab : groups[0].title;
     this.activeTab = active;
     const buttons = groups.map((g) => {
@@ -366,6 +350,28 @@ export class EPSettingTab extends PluginSettingTab {
       };
       return b;
     });
+
+    /** The open tab's sections, as an inline list under the tab bar. */
+    const renderSectionNav = (): void => {
+      sectionNav.empty();
+      const q = this.query.trim();
+      const group = groups.find((g) => g.title === this.activeTab);
+      const show = !q && !!group && group.sects.length > 1;
+      sectionNav.toggleClass("ep-hidden", !show);
+      if (!show || !group) return;
+      for (const s of group.sects) {
+        const b = sectionNav.createEl("button", {
+          cls: "ep-settings-section-link",
+          text: s.title,
+        });
+        b.type = "button";
+        b.onclick = () => {
+          s.heading.scrollIntoView({ block: "start", behavior: "smooth" });
+          s.heading.addClass("ep-settings-flash");
+          window.setTimeout(() => s.heading.removeClass("ep-settings-flash"), 1800);
+        };
+      }
+    };
 
     /** Show the open tab, or - while filtering - every row that matches. */
     const apply = (): void => {
@@ -402,9 +408,7 @@ export class EPSettingTab extends PluginSettingTab {
         hits += shownInTab;
       }
       empty.toggleClass("ep-hidden", !q || hits > 0);
-      // What the strip beside the window lists is whatever this just left on
-      // show - another tab's sections, or a search's worth of them.
-      this.mountNav();
+      renderSectionNav();
     };
 
     const empty = body.createDiv({ cls: "ep-settings-empty setting-item-description ep-hidden" });

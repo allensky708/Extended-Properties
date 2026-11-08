@@ -20374,7 +20374,6 @@ var EPSettingTab = class extends import_obsidian46.PluginSettingTab {
       this.tabify();
       this.tint();
       this.alignLooseText();
-      this.mountNav();
       this.findPendingSection();
     };
     if (this.pendingInline || this.pendingPalette || this.pendingSection) build();
@@ -20398,21 +20397,6 @@ var EPSettingTab = class extends import_obsidian46.PluginSettingTab {
       var _a2;
       return ((_a2 = h.textContent) != null ? _a2 : "").trim() === title;
     })) != null ? _a : null;
-  }
-  /**
-   * The headings of the OPEN tab, on a strip beside the settings window.
-   *
-   * Re-mounted whenever the tab changes: the tabs are the same nodes shown
-   * and hidden rather than a re-render, so nothing else would tell the strip
-   * that what it is describing has been put away. The filter box above
-   * already searches, so the strip is all that is added here.
-   */
-  mountNav() {
-    var _a;
-    mountOptionsNav(this.host, this.plugin.i18n, {
-      search: false,
-      beside: (_a = this.host.closest(".modal")) != null ? _a : this.host
-    });
   }
   /** Bring the row a note body asked for into view, and mark it briefly. */
   showInlineRow() {
@@ -20490,6 +20474,7 @@ var EPSettingTab = class extends import_obsidian46.PluginSettingTab {
       apply();
     };
     const bar = chrome.createDiv({ cls: "ep-settings-tabs" });
+    const sectionNav = chrome.createDiv({ cls: "ep-settings-section-nav" });
     const active = groups.some((g) => g.title === this.activeTab) ? this.activeTab : groups[0].title;
     this.activeTab = active;
     const buttons = groups.map((g) => {
@@ -20504,6 +20489,26 @@ var EPSettingTab = class extends import_obsidian46.PluginSettingTab {
       };
       return b;
     });
+    const renderSectionNav = () => {
+      sectionNav.empty();
+      const q = this.query.trim();
+      const group2 = groups.find((g) => g.title === this.activeTab);
+      const show = !q && !!group2 && group2.sects.length > 1;
+      sectionNav.toggleClass("ep-hidden", !show);
+      if (!show || !group2) return;
+      for (const s of group2.sects) {
+        const b = sectionNav.createEl("button", {
+          cls: "ep-settings-section-link",
+          text: s.title
+        });
+        b.type = "button";
+        b.onclick = () => {
+          s.heading.scrollIntoView({ block: "start", behavior: "smooth" });
+          s.heading.addClass("ep-settings-flash");
+          window.setTimeout(() => s.heading.removeClass("ep-settings-flash"), 1800);
+        };
+      }
+    };
     const apply = () => {
       var _a2;
       const q = this.query.trim().toLowerCase();
@@ -20535,7 +20540,7 @@ var EPSettingTab = class extends import_obsidian46.PluginSettingTab {
         hits += shownInTab;
       }
       empty.toggleClass("ep-hidden", !q || hits > 0);
-      this.mountNav();
+      renderSectionNav();
     };
     const empty = body.createDiv({ cls: "ep-settings-empty setting-item-description ep-hidden" });
     empty.setText(t("settings.searchNoResults"));
