@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Extended Properties - the next finishes</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      /*
+        The harness only, kept for looking at the finishes over a range of
+        fills without opening a vault. It loads the plugin's own stylesheet,
+        so what is shown here is what ships; the watcher below is the same one
+        the plugin installs (see src/ui/render/lamp.ts).
+      */
+      body {
+        margin: 0;
+        padding: 28px;
+        background: #1b1b1f;
+        color: #dcddde;
+        font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+      }
+      h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+      p.note { color: #9a9aa2; max-width: 60ch; margin: 0 0 20px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+      .cell { display: grid; gap: 6px; }
+      .name { color: #9a9aa2; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+      /* Stands in for a formatted row: a fill with a legible foreground. */
+      .row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px; border-radius: 8px; font-weight: 600;
+        background: var(--fill); color: var(--fg);
+      }
+      .row .unit { opacity: .8; font-weight: 400; }
+      .row .val { padding: 1px 8px; border-radius: 6px; }
+      .chips { display: flex; gap: 6px; }
+      .chip {
+        padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+        background: var(--fill); color: var(--fg);
+        /* A border, to show the finish reaching the rim rather than stopping
+           inside it. */
+        border: 2px solid hsl(0 0% 100% / .25);
+      }
+      .swatches { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
+      .swatches button {
+        border: 1px solid #3a3a42; background: #26262c; color: #dcddde;
+        border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit;
+      }
+      .swatches button[aria-pressed="true"] { background: #4c6ef5; border-color: #4c6ef5; color: #fff; }
+    </style>
+  </head>
+  <body>
+    <h1>The next finishes</h1>
+    <p class="note">
+      Move the pointer across the swatches: each one is lit from where the pointer
+      stands on it, so the light crosses the sheet one swatch at a time. It travels
+      at a speed with a ceiling on it, wanders slowly around the pointer even when
+      your hand is still, and eases back to rest when the pointer leaves the window.
+      Pick a fill to see every finish over a different colour.
+    </p>
+    <div class="swatches" id="fills"></div>
+    <div class="grid" id="grid"></div>
+
+    <script>
+      // The finishes, in the order the settings would offer them.
+      const FINISHES = [
+        "sheen", "mirror", "prism", "opal", "nebula",
+        "beacon", "glitter", "crackle", "satin", "weave",
+      ];
+      const FILLS = ["#8b1e3f", "#1f6f8b", "#2f7a45", "#7a5c1f", "#4b3f8b", "#c7ccd1", "#2a2a30"];
+
+      /** Black or white, whichever can be read on the fill (as the plugin does). */
+      const readableOn = (hex) => {
+        const n = parseInt(hex.slice(1), 16);
+        const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        });
+        const l = 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+        return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
+      };
+
+      const grid = document.getElementById("grid");
+      const draw = (fill) => {
+        grid.textContent = "";
+        for (const id of FINISHES) {
+          const cell = document.createElement("div");
+          cell.className = "cell";
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = id;
+          const row = document.createElement("div");
+          row.className = "row ep-fin ep-fin-" + id;
+          row.style.setProperty("--fill", fill);
+          row.style.setProperty("--fg", readableOn(fill));
+          // The value cell is a piece cut out of the row's own sheet, with a
+          // hairline round it - as the plugin draws it when a whole row is
+          // wearing a finish.
+          row.innerHTML =
+            '<span>Strength</span>' +
+            '<span class="val ep-fin ep-fin-' + id + ' ep-fin-cut">18 <span class="unit">mod</span></span>';
+          // ...and the same finish as a list: one sheet, chips cut out of it.
+          const list = document.createElement("div");
+          list.className = "chips ep-fin-sheet";
+          for (const word of ["fire", "ice", "poison"]) {
+            const chip = document.createElement("span");
+            chip.className = "chip ep-fin ep-fin-" + id;
+            chip.style.setProperty("--fill", fill);
+            chip.style.setProperty("--fg", readableOn(fill));
+            chip.textContent = word;
+            list.append(chip);
+          }
+          cell.append(name, row, list);
+          grid.append(cell);
+          // The chips' layers are grown to the row and clipped back to each
+          // chip, exactly as the plugin does it.
+          requestAnimationFrame(() => {
+            // The value cell takes its part of the ROW's sheet.
+            const val = row.querySelector(".val");
+            const rowBox = row.getBoundingClientRect();
+            const vb = val.getBoundingClientRect();
+            val.style.setProperty("--ep-span-t", Math.round(vb.top - rowBox.top) + "px");
+            val.style.setProperty("--ep-span-l", Math.round(vb.left - rowBox.left) + "px");
+            val.style.setProperty("--ep-span-b", Math.round(rowBox.bottom - vb.bottom) + "px");
+            val.style.setProperty("--ep-span-r", Math.round(rowBox.right - vb.right) + "px");
+            val.style.setProperty("--ep-nudge", "28px");
+            row.classList.add("ep-fin-sheet");
+            const box = list.getBoundingClientRect();
+            for (const chip of list.children) {
+              const own = chip.getBoundingClientRect();
+              const style = getComputedStyle(chip);
+              chip.style.setProperty("--ep-span-t", Math.round(own.top - box.top) + "px");
+              chip.style.setProperty("--ep-span-l", Math.round(own.left - box.left) + "px");
+              chip.style.setProperty("--ep-span-b", Math.round(box.bottom - own.bottom) + "px");
+              chip.style.setProperty("--ep-span-r", Math.round(box.right - own.right) + "px");
+              // Out to the rim, and a step along the sheet so the chip is
+              // plainly its own piece of it.
+              chip.style.setProperty("--ep-edge", style.borderTopWidth);
+              chip.style.setProperty("--ep-span-round", style.borderTopLeftRadius);
+              chip.style.setProperty("--ep-nudge", "28px");
+            }
+          });
+        }
+      };
+
+      const fills = document.getElementById("fills");
+      FILLS.forEach((hex, i) => {
+        const b = document.createElement("button");
+        b.style.background = hex;
+        b.style.color = readableOn(hex);
+        b.textContent = hex;
+        b.setAttribute("aria-pressed", String(i === 0));
+        b.onclick = () => {
+          for (const other of fills.children) other.setAttribute("aria-pressed", "false");
+          b.setAttribute("aria-pressed", "true");
+          draw(hex);
+        };
+        fills.append(b);
+      });
+      draw(FILLS[0]);
+
+      /*
+        The lamp, in the shape the plugin installs it (src/ui/render/lamp.ts).
+
+        One listener and one frame of work, but the numbers are worked out per
+        value from where the pointer stands on THAT value - and the light
+        travels there rather than teleporting: eased, and with a ceiling on
+        how fast it may cross a value however hard the pointer is flung. The
+        frame reads every box first and writes every property afterwards, so
+        the page is laid out once rather than once per swatch.
+      */
+      const FALLOFF = 2.6;
+      const RATE = 9;
+      const SPEED = 2.2;
+      const CALM_RATE = 2.5;
+      const CALM_SPEED = 0.25;
+      const ORBIT = 0.055;
+      const ORBIT_SECONDS = 13;
+      const SNAP = 0.002;
+      const quiet = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const REST = { x: 0.42, y: 0.28, near: 0.35 };
+      const clamp = (n, lo, hi) => (n < lo ? lo : n > hi ? hi : n);
+
+      const orbitAt = (seconds) => {
+        const a = (seconds / ORBIT_SECONDS) * Math.PI * 2;
+        return { x: Math.cos(a) * ORBIT, y: Math.sin(a) * ORBIT * 0.7 };
+      };
+
+      const targetFor = (box, px, py, by = { x: 0, y: 0 }) => {
+        const overX = (px - box.left) / (box.width || 1);
+        const overY = (py - box.top) / (box.height || 1);
+        const outX = overX - 0.5;
+        const outY = overY - 0.5;
+        const away = Math.hypot(outX, outY) * 2;
+        return {
+          x: clamp(overX, -0.5, 1.5) + by.x,
+          y: clamp(overY, -0.5, 1.5) + by.y,
+          near: clamp(1 - (away - 1) / FALLOFF, 0, 1),
+        };
+      };
+
+      const propsOf = (light) => {
+        const dx = light.x - 0.5;
+        const dy = light.y - 0.5;
+        const reach = Math.min(1, Math.hypot(dx, dy) * 2);
+        const turn = (Math.atan2(dy, dx) * 180) / Math.PI + 180;
+        return {
+          "--ep-lamp-x": (light.x * 100).toFixed(2) + "%",
+          "--ep-lamp-y": (light.y * 100).toFixed(2) + "%",
+          "--ep-lamp-dx": (dx * 100).toFixed(2) + "%",
+          "--ep-lamp-dy": (dy * 100).toFixed(2) + "%",
+          "--ep-lamp-reach": reach.toFixed(3),
+          "--ep-lamp-turn": turn.toFixed(1) + "deg",
+          "--ep-lamp-near": light.near.toFixed(3),
+        };
+      };
+
+      const approach = (cur, to, dt, speed, rate) => {
+        const gap = to - cur;
+        if (Math.abs(gap) < SNAP) return to;
+        return cur + clamp(gap * (1 - Math.exp(-rate * dt)), -speed * dt, speed * dt);
+      };
+      const stepTo = (cur, to, dt, speed, rate) => ({
+        x: approach(cur.x, to.x, dt, speed, rate),
+        y: approach(cur.y, to.y, dt, speed, rate),
+        near: approach(cur.near, to.near, dt, speed, rate),
+      });
+      const settled = (a, b) =>
+        Math.abs(a.x - b.x) < SNAP && Math.abs(a.y - b.y) < SNAP && Math.abs(a.near - b.near) < SNAP;
+
+      const PROPS = ["x", "y", "dx", "dy", "reach", "turn", "near"];
+      const at = new WeakMap();
+      const resting = new WeakSet();
+      let px = 0;
+      let py = 0;
+      let gone = true;
+      let frame = 0;
+      let last = 0;
+
+      const tick = (now) => {
+        frame = 0;
+        const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
+        last = now;
+        const calm = quiet.matches;
+        // The light wanders around the pointer, so a still hand still breathes.
+        const wander = calm || gone ? { x: 0, y: 0 } : orbitAt(now / 1000);
+        const lit = Array.from(document.querySelectorAll(".ep-fin"));
+        // Chips on one row are one sheet: lit across the row, not each alone.
+        const boxes = lit.map((el) => (el.closest(".ep-fin-sheet") ?? el).getBoundingClientRect());
+        let moving = false;
+        lit.forEach((el, i) => {
+          const to = gone ? REST : targetFor(boxes[i], px, py, wander);
+          const cur = at.get(el) ?? REST;
+          if (settled(cur, to)) {
+            if (settled(to, REST)) {
+              if (resting.has(el)) return;
+              resting.add(el);
+              at.set(el, REST);
+              for (const p of PROPS) el.style.removeProperty("--ep-lamp-" + p);
+              return;
+            }
+            at.set(el, to);
+            return;
+          }
+          const next = stepTo(cur, to, dt, calm ? CALM_SPEED : SPEED, calm ? CALM_RATE : RATE);
+          at.set(el, next);
+          resting.delete(el);
+          moving = true;
+          for (const [k, v] of Object.entries(propsOf(next))) el.style.setProperty(k, v);
+        });
+        if (moving || !gone) run();
+      };
+      const run = () => {
+        if (frame) return;
+        frame = requestAnimationFrame(tick);
+      };
+
+      window.addEventListener("pointermove", (e) => {
+        px = e.clientX;
+        py = e.clientY;
+        gone = false;
+        run();
+      }, { passive: true });
+      // Scrolling moves the values under a pointer that has not moved at all.
+      document.addEventListener("scroll", run, { passive: true, capture: true });
+      // The pointer leaving is a lamp being carried away, not switched off:
+      // the light eases back to rest over the next few frames.
+      document.addEventListener("pointerleave", () => {
+        gone = true;
+        run();
+      });
+    </script>
+  </body>
+</html>

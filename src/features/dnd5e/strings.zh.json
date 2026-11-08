@@ -1,0 +1,19 @@
+{
+  "dnd.featureName": "D&D 5e 角色卡",
+  "dnd.featureDesc": "角色卡模板、属性值、5e 豁免检定与技能预设、熟练与先攻。",
+  "dnd.presetName": "D&D 5e 角色",
+  "dnd.proficiency": "熟练",
+  "dnd.initiative": "先攻",
+  "dnd.savingThrows": "豁免检定",
+  "dnd.skills": "技能",
+  "dnd.tpl.contents": "目录",
+  "dnd.tpl.details": "详情",
+  "dnd.tpl.vitals": "生命状态",
+  "dnd.tpl.abilities": "属性值",
+  "dnd.tpl.description": "描述",
+  "dnd.tpl.spellcasting": "施法",
+  "dnd.tpl.proficiencies": "熟练与语言",
+  "dnd.tpl.features": "特性与特质",
+  "dnd.tpl.equipment": "装备",
+  "dnd.tpl.personality": "个性"
+}

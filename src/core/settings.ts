@@ -1,0 +1,671 @@
+/**
+ * Settings defaults and migration.
+ *
+ * `normalizeSettings` accepts whatever shape was persisted by any previous
+ * plugin version (including the single-layout v1 format) and returns a fully
+ * populated, current `EPSettings`.
+ */
+
+import type { Defaults, Entry, EPSettings, Layout } from "./model";
+import { defaultDerivations } from "./influences";
+import { convertDecimalToNumber, convertLinkToText } from "./layout-ops";
+import type { ColorPoint, ColorRange, ScaleStep } from "../utils/palette";
+import { MAX_ROLLS_AT_ONCE } from "../utils/dice";
+
+export const DEFAULT_DEFAULTS: Defaults = {
+  dataType: "text",
+  colorSpace: "HSL",
+  sectionColumns: 1,
+  sectionTransparent: false,
+  sectionSticky: false,
+  sectionSize: "unlimited",
+  sectionCollapsible: true,
+  sectionDividers: false,
+  fontFamily: "",
+  baseSize: 0,
+  labelSize: 0,
+  valueSize: 0,
+  titleSize: 0,
+  listSize: 0,
+};
+
+/**
+ * Build a fresh settings object. There is no default type: types are
+ * created by the user (or adopted from a note's Type value) and start with
+ * an empty layout; template sections are added explicitly afterwards.
+ */
+export function defaultSettings(): EPSettings {
+  return {
+    types: [],
+    layouts: {},
+    hideShown: true,
+    defaults: { ...DEFAULT_DEFAULTS },
+    manualHide: [],
+    propMenu: true,
+    language: "auto",
+    languageExplicit: false,
+    stringOverrides: {},
+    features: {},
+    derivations: defaultDerivations(),
+    sourceAbbrs: {},
+    modDepth: 8,
+    diceAnim: true,
+    diceAnimRolls: 10,
+    diceAnimMs: 1500,
+    diceAnimStyle: "classic",
+    dice3dAA: false,
+    sound: true,
+    soundVolume: 0.3,
+    diceAnimStay: false,
+    diceAnimBlock: true,
+    modsOffProp: "Modifiers Off",
+    macros: [],
+    rollHistory: [],
+    rollHistoryLimit: 500,
+    rollHistoryEnabled: true,
+    critRanges: {},
+    failOnOne: true,
+    modifierSuffix: "s",
+    crossNote: true,
+  };
+}
+
+/**
+ * Every top-level settings key `normalizeSettings` reads and sanitizes
+ * explicitly. Any persisted key NOT in this set is carried over verbatim (see
+ * the end of `normalizeSettings`), so settings written by a newer plugin
+ * version - or top-level keys saved by a third-party module through the public
+ * API - survive a load -> save round-trip instead of being silently dropped.
+ */
+const HANDLED_KEYS: ReadonlySet<string> = new Set([
+  "types", "layouts", "layout", "hideShown", "defaults", "manualHide",
+  "propMenu", "language", "languageExplicit", "stringOverrides", "features", "derivations",
+  "sourceAbbrs", "modDepth", "diceAnim", "diceAnimRolls", "diceAnimMs", "diceAnimStyle", "dice3dAA",
+  "sound", "soundVolume", "diceAnimStay", "diceAnimBlock", "karmicRolls",
+  "modsOffProp", "macros", "rollHistory", "rollHistoryLimit",
+  "rollHistoryEnabled", "critRanges", "failOnOne", "modifierSuffix",
+  "poolSuffix", "poolExtras", "dnd5ePoolsSeeded",
+  "crossNote", "conflictGuard", "tableLayouts", "tableLastType",
+  "schemaVersion", "soundUi", "soundDice", "soundCrit", "layoutVault",
+  "layoutVaultFolder", "appVersion", "snapshots", "snapshotKeep", "lastSnapshot",
+  "inlineEntries", "propTypes", "dateProps", "typeProp", "typeIcons", "defaultTypeIcon",
+  "clickAction", "dblClickAction", "holdAction", "rightClickAction", "rightHoldAction", "holdMs",
+  "tabOpens",
+  "activation",
+  "units",
+  "freeKey", "inline",
+  "palettes", "formatProps",
+]);
+
+/** Coerce a persisted `types` value to a clean list of non-empty strings. */
+function cleanTypes(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string" && t.trim() !== "") : [];
+}
+
+/**
+ * Structural validation for persisted layouts - the largest user-authored
+ * blob in `data.json`, and until now the least checked one (`inlineEntries`
+ * got the same treatment in v3.7.0). A layout must be an object with a
+ * `sections` array; sections must be objects (a missing `entries` becomes an
+ * empty array); entries must be plain objects. All unrecognized fields are
+ * preserved untouched, keeping the forward-compatibility guarantee.
+ */
+function cleanLayouts(raw: unknown): Record<string, Layout> {
+  const out: Record<string, Layout> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [k, l] of Object.entries(raw as Record<string, unknown>)) {
+    if (!l || typeof l !== "object" || !Array.isArray((l as Record<string, unknown>).sections)) continue;
+    const lay = l as unknown as Layout;
+    const sections = lay.sections
+      .filter((sec) => !!sec && typeof sec === "object" && !Array.isArray(sec))
+      .map((sec) => ({
+        ...sec,
+        entries: Array.isArray(sec.entries)
+          ? sec.entries.filter((e) => !!e && typeof e === "object" && !Array.isArray(e))
+          : [],
+      }));
+    out[k] = { ...lay, sections };
+  }
+  return out;
+}
+
+/**
+ * Merge persisted `data` (any historical shape, possibly null) into a valid
+ * settings object.
+ */
+export function normalizeSettings(raw: unknown, defaultLayout: () => Layout): EPSettings {
+  const s = defaultSettings();
+  const data = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+  if (data) {
+    if (data.layouts && data.types) {
+      s.types = cleanTypes(data.types);
+      s.layouts = cleanLayouts(data.layouts);
+    } else if ((data.layout as { sections?: unknown[] } | undefined)?.sections?.length) {
+      // v1 stored a single layout for the "Character" type.
+      s.types = ["Character"];
+      s.layouts = cleanLayouts({ character: data.layout });
+    }
+    if (typeof data.hideShown === "boolean") s.hideShown = data.hideShown;
+    if (data.defaults) s.defaults = { ...DEFAULT_DEFAULTS, ...(data.defaults as Partial<Defaults>) };
+    if (Array.isArray(data.manualHide)) s.manualHide = data.manualHide as string[];
+    if (typeof data.propMenu === "boolean") s.propMenu = data.propMenu;
+    // Language selector: "auto" follows Obsidian; explicit "en"/"zh" pin it.
+    if (data.language === "auto" || data.language === "en" || data.language === "zh") {
+      s.language = data.language;
+    }
+    if (typeof data.languageExplicit === "boolean") s.languageExplicit = data.languageExplicit;
+    // Upstream always persisted "en" without giving the user a choice; treat
+    // that legacy value as auto so existing vaults follow Obsidian on upgrade.
+    if (s.language === "en" && s.languageExplicit !== true) s.language = "auto";
+    if (data.stringOverrides && typeof data.stringOverrides === "object")
+      s.stringOverrides = data.stringOverrides as EPSettings["stringOverrides"];
+    if (data.features && typeof data.features === "object") s.features = data.features as EPSettings["features"];
+    // An explicitly persisted (even empty) list wins over the seeds.
+    if (Array.isArray(data.derivations))
+      s.derivations = (data.derivations as unknown[]).filter(
+        (d) => !!d && typeof (d as { id?: unknown }).id === "string"
+      ) as EPSettings["derivations"];
+    if (data.sourceAbbrs && typeof data.sourceAbbrs === "object")
+      s.sourceAbbrs = data.sourceAbbrs as EPSettings["sourceAbbrs"];
+    if (typeof data.modDepth === "number" && data.modDepth >= 0)
+      s.modDepth = Math.min(32, Math.floor(data.modDepth));
+    if (typeof data.diceAnim === "boolean") s.diceAnim = data.diceAnim;
+    if (typeof data.diceAnimRolls === "number" && data.diceAnimRolls >= 1)
+      s.diceAnimRolls = Math.min(60, Math.floor(data.diceAnimRolls));
+    if (typeof data.diceAnimMs === "number" && data.diceAnimMs >= 300)
+      s.diceAnimMs = Math.min(10000, Math.floor(data.diceAnimMs));
+    if (typeof data.diceAnimStyle === "string") s.diceAnimStyle = data.diceAnimStyle;
+    if (data.dice3dAA === false) s.dice3dAA = false;
+    if (data.sound === false) s.sound = false;
+    if (typeof data.soundVolume === "number" && data.soundVolume >= 0)
+      s.soundVolume = Math.min(1, data.soundVolume);
+    if (typeof data.diceAnimStay === "boolean") s.diceAnimStay = data.diceAnimStay;
+    if (typeof data.diceAnimBlock === "boolean") s.diceAnimBlock = data.diceAnimBlock;
+    if (data.karmicRolls === true) s.karmicRolls = true;
+    if (typeof data.modsOffProp === "string" && data.modsOffProp.trim())
+      s.modsOffProp = data.modsOffProp.trim();
+    if (Array.isArray(data.macros))
+      s.macros = data.macros
+        .filter(
+          (m) =>
+            !!m &&
+            typeof (m as { id?: unknown }).id === "string" &&
+            typeof (m as { name?: unknown }).name === "string"
+        )
+        .map((m) => {
+          const o = m as {
+            id: string;
+            name: string;
+            segs?: unknown;
+            mode?: unknown;
+            times?: unknown;
+            typeKey?: unknown;
+          };
+          return {
+            id: o.id,
+            name: o.name,
+            segs: Array.isArray(o.segs) ? (o.segs as unknown[]).filter((x) => !!x && typeof x === "object") : [],
+            mode: o.mode === "advantage" || o.mode === "disadvantage" ? o.mode : undefined,
+            times: typeof o.times === "number" && o.times > 1 ? Math.min(MAX_ROLLS_AT_ONCE, Math.floor(o.times)) : undefined,
+            typeKey: typeof o.typeKey === "string" && o.typeKey ? o.typeKey : undefined,
+          };
+        });
+    if (Array.isArray(data.rollHistory))
+      s.rollHistory = (data.rollHistory as unknown[]).filter(
+        (r) => !!r && typeof r === "object" && typeof (r as { id?: unknown }).id === "string"
+      ) as EPSettings["rollHistory"];
+    if (typeof data.rollHistoryLimit === "number" && data.rollHistoryLimit > 0)
+      s.rollHistoryLimit = Math.min(5000, Math.floor(data.rollHistoryLimit));
+    if (data.rollHistoryEnabled === false) s.rollHistoryEnabled = false;
+    if (data.critRanges && typeof data.critRanges === "object") {
+      const out: Record<string, number> = {};
+      for (const k of Object.keys(data.critRanges)) {
+        const v = Number((data.critRanges as Record<string, unknown>)[k]);
+        if (Number.isFinite(v) && v >= 1) out[k] = Math.floor(v);
+      }
+      s.critRanges = out;
+    }
+    if (data.failOnOne === false) s.failOnOne = false;
+    if (typeof data.modifierSuffix === "string") s.modifierSuffix = data.modifierSuffix;
+    if (typeof data.poolSuffix === "string") s.poolSuffix = data.poolSuffix;
+    // Autofill-pool extras: keep only string arrays of non-empty strings.
+    if (typeof data.typeProp === "string" && data.typeProp.trim()) s.typeProp = data.typeProp.trim();
+    if (data.typeIcons && typeof data.typeIcons === "object")
+      s.typeIcons = data.typeIcons as EPSettings["typeIcons"];
+    if (typeof data.defaultTypeIcon === "string" && data.defaultTypeIcon.trim())
+      s.defaultTypeIcon = data.defaultTypeIcon.trim();
+    for (const k of ["clickAction", "dblClickAction", "holdAction", "rightClickAction", "rightHoldAction"] as const) {
+      if (typeof data[k] === "string") s[k] = data[k];
+    }
+    if (typeof data.holdMs === "number" && data.holdMs >= 100) s.holdMs = Math.min(5000, Math.floor(data.holdMs));
+    if (data.tabOpens === false) s.tabOpens = false; // on unless turned off
+    if (data.units && typeof data.units === "object") s.units = data.units as Record<string, string>;
+    if (typeof data.freeKey === "string" && data.freeKey.trim()) s.freeKey = data.freeKey.trim();
+    if (data.inline && typeof data.inline === "object") s.inline = data.inline as EPSettings["inline"];
+    if (Array.isArray(data.palettes)) s.palettes = data.palettes as EPSettings["palettes"];
+    if (data.formatProps && typeof data.formatProps === "object")
+      s.formatProps = data.formatProps as EPSettings["formatProps"];
+    // Activation: only "single" is stored; anything else means the default.
+    if (data.activation && typeof data.activation === "object") {
+      const act: Record<string, string> = {};
+      for (const [k, v] of Object.entries(data.activation as Record<string, unknown>))
+        if (v === "single") act[k] = "single";
+      if (Object.keys(act).length) s.activation = act;
+    }
+    if (data.dnd5ePoolsSeeded === true) s.dnd5ePoolsSeeded = true;
+    if (data.poolExtras && typeof data.poolExtras === "object") {
+      const cleanPool: Record<string, string[]> = {};
+      for (const [k, v] of Object.entries(data.poolExtras as Record<string, unknown>)) {
+        if (!Array.isArray(v)) continue;
+        const arr = (v as unknown[]).filter((x): x is string => typeof x === "string" && x.trim() !== "");
+        if (arr.length) cleanPool[k.toLowerCase()] = arr;
+      }
+      if (Object.keys(cleanPool).length) s.poolExtras = cleanPool;
+    }
+    if (data.crossNote === false) s.crossNote = false;
+    if (data.conflictGuard === false) s.conflictGuard = false;
+    if (data.tableLayouts && typeof data.tableLayouts === "object")
+      s.tableLayouts = data.tableLayouts as EPSettings["tableLayouts"];
+    // Inline `ep-sheet` entries keyed by block id - validate the shape so a
+    // corrupt/foreign value can't crash the inline renderer (it only ever
+    // reads `Entry`-shaped objects out of this map).
+    if (data.inlineEntries && typeof data.inlineEntries === "object") {
+      const clean: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(data.inlineEntries as Record<string, unknown>)) {
+        if (v && typeof v === "object" && typeof (v as Record<string, unknown>).kind === "string") clean[k] = v;
+      }
+      s.inlineEntries = clean as EPSettings["inlineEntries"];
+    }
+    // Shared per-key data types: keep only string -> string pairs.
+    if (data.dateProps && typeof data.dateProps === "object")
+      s.dateProps = data.dateProps as EPSettings["dateProps"];
+    if (data.propTypes && typeof data.propTypes === "object") {
+      const clean: Record<string, string> = {};
+      for (const [k, v] of Object.entries(data.propTypes as Record<string, unknown>)) {
+        if (typeof v === "string" && v) clean[k.toLowerCase()] = v;
+      }
+      if (Object.keys(clean).length) s.propTypes = clean;
+    }
+    if (typeof data.tableLastType === "string") s.tableLastType = data.tableLastType;
+    if (typeof data.schemaVersion === "number") s.schemaVersion = data.schemaVersion;
+    if (data.soundUi === false) s.soundUi = false;
+    if (data.soundDice === false) s.soundDice = false;
+    if (data.soundCrit === false) s.soundCrit = false;
+    if (data.layoutVault === true) s.layoutVault = true;
+    if (typeof data.layoutVaultFolder === "string" && data.layoutVaultFolder.trim())
+      s.layoutVaultFolder = data.layoutVaultFolder.trim();
+    if (typeof data.appVersion === "string") s.appVersion = data.appVersion;
+    if (data.snapshots === true) s.snapshots = true;
+    if (typeof data.snapshotKeep === "number" && data.snapshotKeep > 0)
+      s.snapshotKeep = Math.min(200, Math.floor(data.snapshotKeep));
+    if (typeof data.lastSnapshot === "number") s.lastSnapshot = data.lastSnapshot;
+    // Carry-over guard: preserve any keys we don't explicitly handle above
+    // (forward-compat settings from a newer version, or top-level keys written
+    // by a third-party module) so user customizations are never lost on load.
+    for (const k of Object.keys(data))
+      if (!HANDLED_KEYS.has(k)) (s as unknown as Record<string, unknown>)[k] = data[k];
+  }
+  for (const t of s.types) {
+    const k = t.toLowerCase();
+    if (!s.layouts[k]?.sections) s.layouts[k] = defaultLayout();
+  }
+  return s;
+}
+
+
+// ---------------------------------------------------------------------------
+// Versioned schema migrations (roadmap D3)
+// ---------------------------------------------------------------------------
+
+/** Current settings schema version. Bump when adding a migration step below. */
+export const CURRENT_SCHEMA = 10;
+
+/** One ordered migration step: bring settings up to schema `to`. */
+export interface Migration {
+  to: number;
+  name: string;
+  /** Mutate `s` in place; return true if anything actually changed. */
+  run(s: EPSettings): boolean;
+}
+
+/**
+ * Ordered core migration steps. `normalizeSettings` still coerces legacy shapes
+ * (the pre-versioning "sniff"); these run after it for explicit, tested version
+ * transforms, and {@link runSchemaMigrations} stamps `schemaVersion` so each
+ * step runs at most once. Feature modules contribute their own steps via
+ * `FeatureModule.migrations`.
+ */
+export const SCHEMA_MIGRATIONS: Migration[] = [
+  {
+    to: 1,
+    name: "dedupe-types-and-prune-orphan-tables",
+    run: (s) => {
+      let changed = false;
+      // De-duplicate note types case-insensitively (keep the first spelling).
+      const seen = new Set<string>();
+      const deduped = s.types.filter((tp) => {
+        const k = tp.toLowerCase();
+        if (seen.has(k)) {
+          changed = true;
+          return false;
+        }
+        seen.add(k);
+        return true;
+      });
+      if (changed) s.types = deduped;
+      // Drop table views whose type no longer exists.
+      if (s.tableLayouts)
+        for (const k of Object.keys(s.tableLayouts))
+          if (!seen.has(k.toLowerCase())) {
+            delete s.tableLayouts[k];
+            changed = true;
+          }
+      return changed;
+    },
+  },
+  {
+    to: 2,
+    name: "unify-property-datatypes",
+    run: (s) => {
+      // Data types become per-property (vault-wide) instead of per-layout:
+      // seed `propTypes` from the layouts (first explicit dataType per key
+      // wins), then re-stamp every explicitly-typed entry so all layouts
+      // agree. Entries with no dataType keep auto-deriving - they resolve
+      // through the shared map at render time.
+      let changed = false;
+      const map: Record<string, string> = { ...(s.propTypes ?? {}) };
+      const each = (fn: (e: Entry) => void): void => {
+        for (const lk of Object.keys(s.layouts ?? {}))
+          for (const sec of s.layouts[lk].sections ?? [])
+            for (const e of sec.entries ?? []) fn(e);
+      };
+      each((e) => {
+        if (e.kind !== "prop" || !e.key || typeof e.dataType !== "string") return;
+        const kl = e.key.toLowerCase();
+        if (!map[kl]) map[kl] = e.dataType;
+      });
+      each((e) => {
+        if (e.kind !== "prop" || !e.key || e.dataType === undefined) return;
+        const want = map[e.key.toLowerCase()];
+        if (want && e.dataType !== want) {
+          e.dataType = want;
+          changed = true;
+        }
+      });
+      if (Object.keys(map).length && JSON.stringify(map) !== JSON.stringify(s.propTypes ?? {})) {
+        s.propTypes = map;
+        changed = true;
+      }
+      return changed;
+    },
+  },
+  {
+    to: 3,
+    name: "link-type-into-text",
+    run: (s) => {
+      // The link type is absorbed by text, which carries the same field behind
+      // `choices.linksToNotes` (see `ui/render/value-types/note-link`). Every
+      // property still typed as a link moves across, keeping the folder and
+      // the rest of its choices; the values in notes are already links and are
+      // not touched. `convertLinkToText` does one key at a time, so gather the
+      // keys first - from the shared map and from the entries alike, since a
+      // vault may have either.
+      const keys = new Set<string>();
+      for (const [k, t] of Object.entries(s.propTypes ?? {})) if (t === "link") keys.add(k);
+      const each = (e: Entry | undefined): void => {
+        if (e?.kind === "prop" && e.key && e.dataType === "link") keys.add(e.key.toLowerCase());
+      };
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) each(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) each(s.inlineEntries?.[k]);
+      if (!keys.size) return false;
+      for (const k of keys) convertLinkToText(s, k, undefined);
+      return true;
+    },
+  },
+  {
+    to: 4,
+    name: "link-folder-to-folders",
+    run: (s) => {
+      // One source folder becomes a list of them. The single field is still
+      // read wherever it turns up (an import, an old snapshot), but settings
+      // are written in the new shape from here.
+      let changed = false;
+      const each = (e: Entry | undefined): void => {
+        const c = e?.choices;
+        if (!c?.folder) return;
+        c.folders = c.folders?.length ? c.folders : [c.folder];
+        c.folder = undefined;
+        changed = true;
+      };
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) each(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) each(s.inlineEntries?.[k]);
+      return changed;
+    },
+  },
+  {
+    to: 5,
+    name: "decimal-into-number",
+    run: (s) => {
+      // The decimal type is absorbed by number, which keeps fractions when
+      // told to. Nothing else moves: the range a converted property falls back
+      // to follows the switch, so a slider stays where it was.
+      const keys = new Set<string>();
+      for (const [k, t] of Object.entries(s.propTypes ?? {})) if (t === "decimal") keys.add(k);
+      const each = (e: Entry | undefined): void => {
+        if (e?.kind === "prop" && e.key && e.dataType === "decimal") keys.add(e.key.toLowerCase());
+      };
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) each(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) each(s.inlineEntries?.[k]);
+      if (!keys.size) return false;
+      for (const k of keys) convertDecimalToNumber(s, k);
+      return true;
+    },
+  },
+  {
+    to: 6,
+    name: "snap-switch-per-line-kind",
+    run: (s) => {
+      // One "snap to the lines" switch plus a range becomes one switch per
+      // kind of line. The old switch snapped to every line drawn, so both.
+      let changed = false;
+      const each = (e: Entry | undefined): void => {
+        if (!e || e.snapTicks === undefined) return;
+        if (e.snapTicks === true) {
+          if (Number(e.tickMajor) > 0) e.snapPrimary = true;
+          if (Number(e.tickMinor) > 0) e.snapSecondary = true;
+        }
+        e.snapTicks = undefined;
+        e.snapRange = undefined;
+        changed = true;
+      };
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) each(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) each(s.inlineEntries?.[k]);
+      return changed;
+    },
+  },
+  {
+    to: 7,
+    name: "one-scale-of-stops-and-bands",
+    run: (s) => {
+      // Stops and bands were two palette modes that could not be mixed; they
+      // are one scale now, since a stop is only a band with no width. The
+      // colours come out of the steps into a list of their own, paired by
+      // position - which is what lets either be moved without the other.
+      let changed = false;
+      for (const p of s.palettes ?? []) {
+        const legacy = p as unknown as {
+          mode: string;
+          points?: ColorPoint[];
+          ranges?: ColorRange[];
+          steps?: ScaleStep[];
+          colors?: string[];
+          gaps?: "blend" | "none";
+          outside?: "none" | "clamp";
+        };
+        const wasPoints = legacy.mode === "points";
+        if (!wasPoints && legacy.mode !== "ranges") continue;
+        const steps: ScaleStep[] = [];
+        const colors: string[] = [];
+        if (wasPoints)
+          for (const pt of [...(legacy.points ?? [])].sort((a, b) => a.at - b.at)) {
+            steps.push({ from: pt.at, to: pt.at, point: true });
+            colors.push(pt.color);
+          }
+        else
+          for (const r of [...(legacy.ranges ?? [])].sort((a, b) => a.from - b.from)) {
+            steps.push({ from: r.from, to: r.to, domFrom: r.domFrom, domTo: r.domTo });
+            colors.push(r.color);
+          }
+        legacy.steps = steps;
+        legacy.colors = colors;
+        legacy.mode = "bands";
+        // Stops blended between themselves and held their end colours beyond
+        // the ends; on one scale those are the gap and outside rules, so they
+        // are written down rather than lost.
+        if (wasPoints) {
+          legacy.gaps = legacy.gaps ?? "blend";
+          legacy.outside = legacy.outside ?? "clamp";
+        }
+        delete legacy.points;
+        delete legacy.ranges;
+        changed = true;
+      }
+      return changed;
+    },
+  },
+  {
+    to: 8,
+    name: "finishes-remade",
+    run: (s) => {
+      // The finishes were redrawn as one set of materials, and the ones that
+      // went are pointed at their nearest survivor rather than dropped: a
+      // property wearing "chrome" should not come back wearing nothing.
+      const moved: Record<string, string> = {
+        "reverse-holo": "holographic",
+        refractor: "prismatic",
+        chrome: "gloss",
+        "cracked-ice": "crystal",
+        cosmic: "sparkle",
+        shimmer: "satin",
+        metallic: "foil",
+        canvas: "linen",
+        "die-cut": "emboss",
+        parallel: "foil",
+        mojo: "radiant",
+        wave: "radiant",
+        negative: "emboss",
+        etch: "emboss",
+        prizm: "prismatic",
+      };
+      let changed = false;
+      const each = (rules: { finish: string }[] | undefined): void => {
+        for (const r of rules ?? []) {
+          const to = moved[r.finish];
+          if (!to) continue;
+          r.finish = to;
+          changed = true;
+        }
+      };
+      for (const rule of Object.values(s.formatProps ?? {})) each(rule.finishes);
+      const entry = (e: Entry | undefined): void => each(e?.format?.finishes);
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) entry(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) entry(s.inlineEntries?.[k]);
+      return changed;
+    },
+  },
+  {
+    to: 9,
+    name: "finishes-lit-by-a-pointer",
+    run: (s) => {
+      // The finishes were redrawn again, this time as materials with the light
+      // moving across them, and several were renamed for what they now are.
+      // Every old name is pointed at the one that replaced it.
+      const moved: Record<string, string> = {
+        gloss: "sheen",
+        prismatic: "prism",
+        holographic: "spectra",
+        iridescent: "opal",
+        emboss: "relief",
+        sparkle: "glitter",
+        linen: "weave",
+        crystal: "crackle",
+        radiant: "beacon",
+      };
+      let changed = false;
+      const each = (rules: { finish: string }[] | undefined): void => {
+        for (const r of rules ?? []) {
+          const to = moved[r.finish];
+          if (!to) continue;
+          r.finish = to;
+          changed = true;
+        }
+      };
+      for (const rule of Object.values(s.formatProps ?? {})) each(rule.finishes);
+      const entry = (e: Entry | undefined): void => each(e?.format?.finishes);
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) entry(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) entry(s.inlineEntries?.[k]);
+      return changed;
+    },
+  },
+  {
+    to: 10,
+    name: "ten-finishes",
+    run: (s) => {
+      // Five of the fifteen were doing the same job as another one beside
+      // them; each is pointed at whichever survivor is nearest in material.
+      const moved: Record<string, string> = {
+        matte: "satin",
+        foil: "mirror",
+        spectra: "prism",
+        relief: "weave",
+        hammered: "crackle",
+      };
+      let changed = false;
+      const each = (rules: { finish: string }[] | undefined): void => {
+        for (const r of rules ?? []) {
+          const to = moved[r.finish];
+          if (!to) continue;
+          r.finish = to;
+          changed = true;
+        }
+      };
+      for (const rule of Object.values(s.formatProps ?? {})) each(rule.finishes);
+      for (const p of s.palettes ?? []) each(p.finishes);
+      const entry = (e: Entry | undefined): void => each(e?.format?.finishes);
+      for (const lk of Object.keys(s.layouts ?? {}))
+        for (const sec of s.layouts[lk].sections ?? []) for (const e of sec.entries ?? []) entry(e);
+      for (const k of Object.keys(s.inlineEntries ?? {})) entry(s.inlineEntries?.[k]);
+      return changed;
+    },
+  },
+];
+
+/**
+ * Run every step newer than `s.schemaVersion`, in order, then stamp the current
+ * version. Pure and idempotent - a second run is a no-op. `table` is injectable
+ * for tests and for folding in feature-module steps.
+ */
+export function runSchemaMigrations(
+  s: EPSettings,
+  table: Migration[] = SCHEMA_MIGRATIONS
+): { changed: boolean; from: number; to: number; ran: string[] } {
+  const from = typeof s.schemaVersion === "number" ? s.schemaVersion : 0;
+  let changed = false;
+  const ran: string[] = [];
+  for (const m of [...table].sort((a, b) => a.to - b.to)) {
+    if (m.to <= from) continue;
+    if (m.run(s)) changed = true;
+    ran.push(m.name);
+  }
+  if (s.schemaVersion !== CURRENT_SCHEMA) {
+    s.schemaVersion = CURRENT_SCHEMA;
+    if (from < CURRENT_SCHEMA) changed = true;
+  }
+  return { changed, from, to: CURRENT_SCHEMA, ran };
+}

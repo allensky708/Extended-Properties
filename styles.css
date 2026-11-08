@@ -1,0 +1,2244 @@
+/* Extended Properties - Character Sidebar */
+/* @settings
+
+name: Extended Properties
+id: obsidian-extended-properties
+settings:
+    -
+        id: ep-theming-heading
+        title: Extended Properties
+        description: Restyle the sidebar, cards and table. Untouched controls fall back to the current theme.
+        type: heading
+        level: 2
+        collapsed: true
+    -
+        id: ep-accent-default
+        title: Section accent
+        description: Accent colour for section titles, icons and drop markers (per-section colours still win).
+        type: variable-color
+        format: hex
+        opacity: false
+        default: '#9b87f5'
+    -
+        id: ep-rating-color
+        title: Rating colour
+        description: Colour of rating stars / pips.
+        type: variable-color
+        format: hex
+        opacity: false
+        default: '#9b87f5'
+    -
+        id: ep-chip-bg
+        title: List chip background
+        description: Background of list / tag value chips.
+        type: variable-color
+        format: hex
+        opacity: true
+        default: '#3a3a46'
+    -
+        id: ep-section-bg
+        title: Section background
+        description: Fill behind each section.
+        type: variable-color
+        format: hex
+        opacity: true
+        default: '#26262e'
+    -
+        id: ep-radius
+        title: Corner radius
+        description: Border radius of sections, cards and chips.
+        type: variable-text
+        default: 8px
+    -
+        id: ep-section-gap
+        title: Space between sections
+        description: Vertical gap above each section.
+        type: variable-text
+        default: 10px
+    -
+        id: ep-flat-sections
+        title: Flat sections
+        description: Drop section borders and background for a borderless look.
+        type: class-toggle
+        default: false
+
+*/
+
+/* -- Extended Properties: theming surface (E3) ------------------------------
+   Every plugin surface reads `--ep-*` variables with the current value as a
+   fallback, so themes / Style Settings can restyle without `!important`. See
+   README "Theming" for the full list. */
+body.ep-flat-sections .ep-section { border-color: transparent; background: transparent; }
+
+.ep-sidebar { padding: 0 10px 24px; overflow-y: auto; background: var(--background-primary); font-family: var(--ep-font, inherit); font-size: var(--ep-size-base, var(--font-ui-small)); display: flex; flex-direction: column; }
+/* The body flow fills leftover height so a footer-pinned zone sits at the
+   view's bottom edge even when the content is short. */
+.ep-flow { flex: 1 0 auto; }
+.ep-empty { margin-top: 24px; text-align: center; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.ep-empty-sub { font-size: var(--font-ui-smaller); color: var(--text-muted); padding: 4px 0 6px; }
+
+.ep-header { position: sticky; top: 0; z-index: 6; background: var(--background-primary); margin: 0 -10px; padding: 8px 10px; border-bottom: 1px solid var(--background-modifier-border); }
+.ep-titlerow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.ep-title { font-size: var(--font-ui-large); font-weight: 700; color: var(--text-normal); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-type-badge { font-size: var(--font-ui-smaller); color: var(--text-muted); border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 0 6px; }
+.ep-edit-toggle { padding: 3px 12px; font-size: var(--font-ui-smaller); cursor: pointer; transition: background-color .2s ease, color .2s ease; }
+.ep-edit-toggle.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.ep-toolbar { display: flex; gap: 6px; }
+.ep-tool-btn { flex: 1; padding: 4px 0; font-size: var(--font-ui-smaller); cursor: pointer; transition: background-color .2s ease; }
+
+.ep-mode { display: flex; gap: 4px; }
+.ep-mode-btn { flex: 1; padding: 4px 0; font-size: var(--font-ui-smaller); cursor: pointer; transition: background-color .2s ease, color .2s ease; }
+.ep-mode-btn.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.ep-log { margin: 6px 0 0; display: flex; flex-direction: column; gap: 3px; font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }
+.ep-log-empty { color: var(--text-faint); font-style: italic; }
+.ep-log-row { padding: 3px 6px; border-radius: 5px; background: var(--background-primary); animation: ep-fade .2s ease; }
+.ep-log-row.ep-crit { color: var(--text-success); font-weight: 700; }
+.ep-log-row.ep-fail { color: var(--text-error); font-weight: 700; }
+.ep-init { width: 100%; margin: 6px 0 10px; }
+
+/* Pinned zones. Both cap their height (--ep-zone-max ~ a third of the view,
+   set by reflowSticky) and scroll internally past it - so pinning any number
+   of sections keeps every item reachable at any window size, instead of the
+   zones swallowing the view. flex-shrink: 0 keeps the flex column from
+   squeezing them below their capped height. */
+.ep-sticky-zone { position: sticky; top: 0; z-index: 4; background: var(--background-primary); max-height: var(--ep-zone-max, 34%); overflow-y: auto; overscroll-behavior: contain; flex-shrink: 0; }
+.ep-sticky-zone:not(:empty) { padding-top: 8px; padding-bottom: 8px; }
+.ep-footer-zone { position: sticky; bottom: 0; z-index: 4; background: var(--background-primary); max-height: var(--ep-zone-max, 34%); overflow-y: auto; overscroll-behavior: contain; flex-shrink: 0; }
+.ep-footer-zone:not(:empty) { padding-top: 8px; padding-bottom: 8px; box-shadow: 0 -8px 14px -12px rgba(0, 0, 0, 0.45); }
+
+.ep-section { --ep-accent: var(--ep-accent-default, var(--text-accent)); --ep-control: var(--ep-control-default, var(--interactive-normal)); --ep-title-bg: var(--ep-section-title-bg, var(--background-secondary)); margin-top: var(--ep-section-gap, 10px); border: 1px solid var(--ep-section-border, var(--background-modifier-border)); border-radius: var(--ep-radius, 8px); padding: var(--ep-section-pad, 4px 8px 6px); background: var(--ep-section-bg, var(--background-secondary)); transition: box-shadow .2s ease, border-color .2s ease, background-color .2s ease; }
+.ep-section.ep-drop-top { box-shadow: inset 0 3px 0 var(--ep-accent); }
+.ep-section.ep-drop-bottom { box-shadow: inset 0 -3px 0 var(--ep-accent); }
+.ep-section.ep-transparent.ep-transparent { background: transparent; border-color: transparent; padding-left: 0; padding-right: 0; }
+.ep-editing .ep-section { border-style: dashed; }
+.ep-section-title { font-size: var(--ep-size-title, var(--font-ui-smaller)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--ep-accent); font-weight: 700; cursor: pointer; padding: 3px 0; display: flex; align-items: center; gap: 5px; }
+/* non-sticky section headers pin while the section is in view (rounded corners persist) */
+.ep-flow-section > .ep-section-title { position: sticky; top: var(--ep-sticky-top, 0); z-index: 2; background: var(--ep-title-bg); margin: -4px -8px 4px; padding: 5px 8px; border-radius: 7px 7px 0 0; }
+/* Pinned top/bottom zones scroll internally when they hold several sections;
+   keep each pinned section's header stuck to the top of its zone so it stays
+   clear which section is being navigated while scrolling the zone. */
+.ep-sticky-zone .ep-section-title, .ep-footer-zone .ep-section-title { position: sticky; top: 0; z-index: 2; background: var(--ep-title-bg); margin: -4px -8px 4px; padding: 5px 8px; border-radius: 7px 7px 0 0; }
+.ep-spacer { flex: 1; }
+.ep-sec-name { text-transform: none; letter-spacing: 0; }
+.ep-chev { display: inline-flex; align-items: center; color: var(--text-muted); transition: transform .2s ease; }
+.ep-chev.ep-open { transform: rotate(90deg); }
+.ep-chev svg { width: 14px; height: 14px; }
+.ep-ticon, .ep-picon { display: inline-flex; align-items: center; color: var(--ep-accent, var(--text-muted)); }
+.ep-ticon svg, .ep-picon svg { width: 16px; height: 16px; }
+.ep-cols-btn, .ep-menu-btn, .ep-icon-btn { cursor: pointer; color: var(--text-muted); padding: 0 3px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; transition: background-color .2s ease, color .2s ease; }
+.ep-cols-btn:hover, .ep-menu-btn:hover, .ep-icon-btn:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+/* The menu button draws an icon (vertical dots), not text: size it like the
+   other row glyphs and keep it from being squeezed by a long value. */
+.ep-menu-btn { flex: 0 0 auto; }
+.ep-menu-btn svg { width: 15px; height: 15px; }
+.ep-dim { opacity: 0.5; }
+.ep-collapse { transition: height .2s ease; }
+/* Properties held out of the fold: drawn always, shown only while the
+   section is collapsed (the folded copy is inert, so neither is a
+   second stop on the way round with the keyboard). */
+.ep-section-kept { display: none; padding: 0 var(--ep-section-pad-x, 8px) 6px; }
+.ep-section.is-collapsed .ep-section-kept { display: block; }
+
+.ep-grip { cursor: grab; color: var(--text-faint); user-select: none; padding: 0 1px; transition: color .2s ease; }
+.ep-grip:hover { color: var(--text-normal); }
+
+.ep-grid { display: grid; gap: 4px 8px; transition: max-height .2s ease; }
+.ep-grid.ep-dividers .ep-entry { border-bottom: 1px solid var(--background-modifier-border-hover); padding: 0 0 4px; border-radius: 0; }
+.ep-grid.ep-dividers.ep-mode-list > .ep-entry:last-child, .ep-grid.ep-dividers.ep-mode-columns .ep-col > .ep-entry:last-child, .ep-grid.ep-dividers.ep-mode-grid > .ep-col:last-child > .ep-entry { border-bottom: none; }
+.ep-entry { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 2px 3px; border-radius: 6px; transition: box-shadow .2s ease, background-color .2s ease, opacity .2s ease; }
+.ep-editing .ep-entry:hover { background: var(--background-modifier-hover); }
+.ep-entry.ep-dragging { opacity: 0.4; }
+.ep-entry.ep-drop-top { box-shadow: inset 0 2px 0 var(--ep-accent); }
+.ep-entry.ep-drop-bottom { box-shadow: inset 0 -2px 0 var(--ep-accent); }
+.ep-entry-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ep-entry-extra:empty { display: none; }
+
+.ep-editable { cursor: text; border-bottom: 1px dashed var(--text-faint); padding: 0 1px; transition: background-color .2s ease; }
+.ep-editable:hover { background: var(--background-modifier-hover); }
+.ep-placeholder { color: var(--text-faint); font-style: italic; }
+.ep-edit-input { width: 5em; max-width: 100%; font: inherit; padding: 1px 3px; animation: ep-pop .2s ease; }
+.ep-edit-label { width: 9em; }
+
+.ep-line-name { flex: 1; min-width: 2.6em; padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ep-size-label, inherit); }
+.ep-val-right { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--ep-size-value, inherit); }
+/* The value cell takes the row's free width so an empty value is a strip to
+   click, not a dash to hit. Content stays right-aligned, so nothing moves. */
+.ep-entry-head > .ep-val-hit { flex: 1 1 auto; justify-content: flex-end; cursor: text; }
+.ep-entry-head > .ep-val-hit:hover { background: var(--background-modifier-hover); border-radius: var(--ep-radius, 4px); }
+
+.ep-cluster { margin-left: auto; display: inline-grid; align-items: center; justify-items: center; gap: 2px; }
+.ep-cell { display: flex; align-items: center; justify-content: center; width: 100%; }
+.ep-roll-cell { justify-content: flex-end; }
+.ep-mod-badge { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--font-ui-smaller); }
+.ep-step-btn { width: 20px; height: 22px; padding: 0; font-size: 15px; line-height: 1; cursor: pointer; background: var(--ep-control); transition: background-color .2s ease; }
+.ep-num { min-width: 2em; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--ep-size-value, inherit); }
+/* touch-action: pan-y lets a vertical scroll pass through the slider to the
+   page on mobile; only horizontal drags adjust the value. */
+.ep-slider { width: 100%; cursor: pointer; touch-action: pan-y; }
+
+/* Custom scroll-safe slider: only the knob is interactive while idle (the rest
+   of the row scrolls); the track collapses to a small pill around the knob and
+   expands to full width only while dragging. --ep-knob is the knob position. */
+/* inset by half the knob width so the (idle) knob never overflows the row and
+   gets clipped by a column / grid cell at the 0% and 100% extremes */
+.ep-slider2 { position: relative; width: calc(100% - 28px); margin: 0 14px; height: 22px; pointer-events: none; --ep-knob: 0%; }
+/* The rail: one pixel, the full width, always there - the extent the handle
+   travels, visible before anything is dragged. */
+.ep-slider2-rail { position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: var(--background-modifier-border); }
+.ep-slider2-track { position: absolute; top: 50%; left: var(--ep-knob); width: 44px; max-width: 100%; height: 4px; border-radius: 999px; background: var(--background-modifier-border); transform: translate(-50%, -50%); transition: left 0.12s ease, width 0.12s ease; }
+.ep-slider2.is-active .ep-slider2-track { left: 50%; width: 100%; }
+.ep-slider2-knob { position: absolute; top: 50%; left: var(--ep-knob); width: 28px; height: 28px; transform: translate(-50%, -50%); pointer-events: auto; cursor: grab; touch-action: none; transition: left 0.08s ease-out; }
+.ep-slider2-knob::before { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: var(--interactive-accent); border: 2px solid var(--background-primary); box-shadow: 0 0 0 1px var(--background-modifier-border); }
+.ep-slider2.is-active .ep-slider2-knob { cursor: grabbing; }
+.ep-slider2-knob:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; border-radius: 50%; }
+.ep-prof { cursor: pointer; }
+
+.ep-swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--background-modifier-border); display: inline-block; cursor: pointer; vertical-align: middle; }
+.ep-swatch-empty { background-image: linear-gradient(45deg, var(--background-modifier-border) 25%, transparent 25%, transparent 75%, var(--background-modifier-border) 75%); background-size: 8px 8px; }
+.ep-color-text { font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }
+
+.ep-list-holder { width: 100%; }
+.ep-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ep-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--ep-control, var(--background-modifier-hover)); border-radius: 10px; padding: 1px 8px; transition: background-color .2s ease; }
+.ep-chip-x { cursor: pointer; color: var(--text-faint); font-weight: 700; transition: color .2s ease; }
+.ep-chip-x:hover { color: var(--text-error); }
+.ep-list-add { width: 6em; flex: 0 0 auto; }
+
+.ep-image { width: 100%; }
+.ep-image-img { width: 100%; border-radius: 6px; display: block; }
+.ep-image-empty { color: var(--text-faint); font-style: italic; text-align: center; padding: 8px; border: 1px dashed var(--background-modifier-border); border-radius: 6px; cursor: pointer; }
+
+.ep-entry-block { display: block; }
+.ep-block-list { margin-top: 2px; font-size: var(--ep-size-list, inherit); }
+.ep-line { display: flex; align-items: center; gap: 8px; padding: 3px 2px; border-bottom: 1px solid var(--background-modifier-border-hover); }
+.ep-line:last-child { border-bottom: none; }
+.ep-line-abbr { font-size: var(--font-ui-smaller); color: var(--text-faint); width: 30px; text-align: right; }
+.ep-line-mod { font-weight: 700; font-variant-numeric: tabular-nums; width: 32px; text-align: right; }
+.ep-roll-btn { padding: 2px 8px; font-size: var(--font-ui-smaller); cursor: pointer; background: var(--ep-control); transition: background-color .2s ease; }
+
+.ep-toc { display: flex; flex-direction: column; gap: 1px; }
+.ep-toc-row { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.ep-toc-row:hover { background: var(--background-modifier-hover); color: var(--text-accent); }
+
+.ep-add { margin-top: 6px; }
+.ep-add-input { width: 100%; font: inherit; padding: 3px 6px; border: 1px dashed var(--background-modifier-border); border-radius: 6px; background: transparent; transition: border-color .2s ease; }
+.ep-add-input:focus { border-style: solid; }
+.ep-sug-badge { margin-left: 8px; font-size: var(--font-ui-smaller); color: var(--text-on-accent); background: var(--interactive-accent); border-radius: 8px; padding: 0 6px; }
+.ep-sug-create { font-style: italic; color: var(--text-muted); }
+
+/* color picker */
+.ep-cp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.ep-cp-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ep-cp-preview { flex: 1; height: 36px; border-radius: 6px; border: 1px solid var(--background-modifier-border); }
+.ep-cp-2col { display: flex; gap: 12px; align-items: flex-start; }
+.ep-cp-left { flex: 0 0 auto; }
+.ep-cp-right { flex: 1; min-width: 0; }
+.ep-cp-channel { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.ep-cp-channel .ep-edit-input { width: 4.5em; }
+.ep-cp-label { min-width: 1.4em; font-weight: 700; text-align: center; }
+.ep-gslider { position: relative; flex: 1; height: 22px; display: flex; align-items: center; min-width: 0; }
+.ep-gtrack { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 10px; border-radius: 5px; border: 1px solid var(--background-modifier-border); }
+.ep-grange { position: absolute; left: 0; right: 0; width: 100%; height: 22px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; }
+.ep-grange::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #333; cursor: pointer; box-shadow: 0 0 0 1px #fff; }
+.ep-grange::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #333; cursor: pointer; }
+.ep-cp-field-wrap { position: relative; width: 200px; max-width: 100%; }
+.ep-cp-field { width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--background-modifier-border); display: block; touch-action: none; cursor: crosshair; }
+.ep-cp-cursor { position: absolute; width: 12px; height: 12px; border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+
+/* options modals: no per-item dividers within groups */
+.ep-options h4 { margin: 14px 0 0; color: var(--text-accent); font-size: var(--font-ui-small); text-transform: uppercase; letter-spacing: .04em; }
+.ep-options .setting-item { border-top: none; padding: 6px 0; }
+
+@keyframes ep-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ep-pop { from { transform: scale(0.96); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ep-section, .ep-entry, .ep-mode-btn, .ep-tool-btn, .ep-step-btn, .ep-roll-btn, .ep-set-btn, .ep-chip, .ep-edit-toggle, .ep-cols-btn, .ep-menu-btn, .ep-icon-btn, .ep-grip, .ep-add-input, .ep-editable, .ep-chip-x, .ep-chev, .ep-collapse, .ep-grid { transition: none; } .ep-log-row, .ep-edit-input { animation: none; } }
+@media (pointer: coarse) { .ep-step-btn { width: 26px; height: 26px; } .ep-roll-btn, .ep-set-btn { padding: 4px 12px; } .ep-prof { width: 18px; height: 18px; } .ep-grip { padding: 0 6px; } }
+
+/* round 7 additions */
+.ep-image-fixed { overflow: hidden; }
+.ep-image-fixed .ep-image-img { height: 100%; object-fit: cover; object-position: center; }
+.ep-iframe-wrap { width: 100%; overflow: hidden; border-radius: 6px; }
+.ep-iframe-edit { margin-top: 4px; }
+.ep-default-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 6px; }
+.ep-default-lbl { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-right: 2px; }
+.ep-mini-btn { padding: 1px 7px; font-size: var(--font-ui-smaller); cursor: pointer; }
+.ep-icon-prev { display: inline-flex; align-items: center; min-width: 20px; justify-content: center; }
+.ep-icon-prev svg { width: 16px; height: 16px; }
+.ep-cp-body.ep-slide-r { animation: ep-slide-r .2s ease; }
+.ep-cp-body.ep-slide-l { animation: ep-slide-l .2s ease; }
+@keyframes ep-slide-r { from { opacity: .3; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+@keyframes ep-slide-l { from { opacity: .3; transform: translateX(-26px); } to { opacity: 1; transform: none; } }
+.ep-iconpick-grid { display: grid; grid-template-columns: repeat(auto-fill, 34px); gap: 4px; max-height: 50vh; overflow: auto; margin-top: 8px; }
+.ep-iconpick-item { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--text-muted); }
+.ep-iconpick-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.ep-iconpick-item.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.ep-iconpick-item svg { width: 18px; height: 18px; }
+@media (prefers-reduced-motion: reduce) { .ep-cp-body.ep-slide-r, .ep-cp-body.ep-slide-l { animation: none; } }
+
+/* round 8 additions */
+.ep-gthumb { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid #333; box-shadow: 0 0 0 1px #fff; pointer-events: none; }
+.ep-cp-body { overflow: hidden; transition: height .2s ease; }
+.ep-icon-btn.is-active { color: var(--text-on-accent); background: var(--interactive-accent); }
+.ep-mode-anim .ep-flow, .ep-mode-anim .ep-sticky-zone, .ep-mode-anim .ep-footer-zone { animation: ep-modefade .22s ease; }
+@keyframes ep-modefade { from { opacity: .35; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ep-cp-body { transition: none; } .ep-mode-anim .ep-flow, .ep-mode-anim .ep-sticky-zone, .ep-mode-anim .ep-footer-zone { animation: none; } }
+
+/* round 9 additions */
+.ep-picon, .ep-ticon { margin-right: -2px; }
+
+/* round 10 additions */
+/* Zero top + bottom padding so the sticky header sits flush at the top and the
+   sticky footer zone fills flush to the bottom edge (no transparent gap below it
+   through which scrolled content would show). */
+.ep-sidebar.ep-sidebar { padding-top: 0; padding-bottom: 0; display: flex; flex-direction: column; min-height: 100%; }
+
+/* round 12 additions */
+.ep-grid.ep-mode-list { display: flex; flex-direction: column; }
+.ep-grid.ep-mode-columns, .ep-grid.ep-mode-grid { display: grid; align-items: start; }
+.ep-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* Column-responsive compaction (locked view, Columns/Grid): hide the interactive
+   controls column-wide when columns get narrow, before the value would clip.
+   Zeroing --ep-step-col collapses the stepper tracks in every cluster inside. */
+/* Grid clusters never flex-shrink: a compressed cluster squeezes its tracks
+   below their natural size, so the roll button overflows the cell's right
+   edge and the value spills under its neighbors - and the responsive pass
+   would measure the shrunken width, deciding to wrap too late. Rigid at
+   rest, the label (flex: 1, ellipsis) absorbs the squeeze and the staged
+   compaction below sees true widths, so the steady state always fits. */
+.ep-grid.ep-mode-grid .ep-cluster { flex-shrink: 0; }
+/* Columns mode gets incidental left-slack on the roll button (the shared
+   roll track is widened by rows whose roll cell carries a dice tag, and the
+   button right-aligns). Grid cells keep their own width, so give the roll
+   cell explicit breathing room from its left neighbor instead. */
+.ep-grid.ep-mode-grid .ep-cluster > .ep-roll-cell { padding-left: 6px; }
+.ep-grid.ep-compact-steppers, .ep-grid.ep-compact,
+.ep-entry.ep-compact-steppers, .ep-entry.ep-compact { --ep-step-col: 0px; }
+.ep-grid.ep-compact-steppers .ep-step-btn,
+.ep-grid.ep-compact .ep-step-btn,
+.ep-grid.ep-compact .ep-tog-cell,
+.ep-entry.ep-compact-steppers .ep-step-btn,
+.ep-entry.ep-compact .ep-step-btn,
+.ep-entry.ep-compact .ep-tog-cell { display: none; }
+/* Grid cell = column cell: the cluster shrinks to fit its cell (tracks floor at
+   min-content, so the roll button never clips) exactly like a column cell. But
+   during the responsive measurement pass we pin it rigid, so maxCluster reads
+   the true (unshrunk) width and the column count is decided correctly - then it
+   shrinks-to-fit for the real paint once .ep-measuring is removed. */
+.ep-empty-cell { min-height: 0; }
+.ep-disabled { opacity: 0.5; }
+
+/* round 13 additions */
+.ep-entry-extra { width: 100%; }
+.ep-entry-extra .ep-slider, .ep-slider { width: 100%; box-sizing: border-box; }
+.ep-editing .ep-grid.ep-mode-columns, .ep-editing .ep-grid.ep-mode-grid { gap: 1px; background: var(--background-modifier-border); border: 1px solid var(--background-modifier-border); border-radius: 6px; }
+.ep-editing .ep-grid.ep-mode-columns > .ep-col, .ep-editing .ep-grid.ep-mode-grid > .ep-col, .ep-editing .ep-grid.ep-mode-grid > .ep-empty-cell { background: var(--ep-title-bg, var(--background-secondary)); padding: 4px; }
+.ep-editing .ep-grid.ep-mode-grid > .ep-empty-cell { min-height: 28px; }
+
+/* round 14 additions */
+.ep-clickname { cursor: pointer; }
+.ep-highlighting .ep-entry { transition: opacity .35s ease; opacity: 0.2; }
+.ep-highlighting .ep-entry.ep-highlight { opacity: 1; }
+
+.ep-list-holder { font-size: var(--ep-size-value, var(--font-ui-smaller)); }
+.ep-list-add { font-size: inherit; padding: 1px 6px; line-height: 1.35; }
+
+/* auto-hide scrollbars (show on hover / while scrolling) */
+.ep-sidebar::-webkit-scrollbar, .ep-grid::-webkit-scrollbar { width: 9px; height: 9px; }
+.ep-sidebar::-webkit-scrollbar-track, .ep-grid::-webkit-scrollbar-track { background: transparent; }
+.ep-sidebar::-webkit-scrollbar-thumb, .ep-grid::-webkit-scrollbar-thumb { background: transparent; border-radius: 5px; }
+.ep-sidebar:hover::-webkit-scrollbar-thumb, .ep-sidebar.ep-scrolling::-webkit-scrollbar-thumb, .ep-grid:hover::-webkit-scrollbar-thumb { background: var(--background-modifier-border); }
+
+/* image viewer */
+.ep-imgview-modal { width: 80vw; max-width: 1000px; }
+.ep-imgview-wrap { overflow: hidden; width: 100%; height: 70vh; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; background: var(--background-secondary); border-radius: 6px; }
+.ep-imgview-wrap:active { cursor: grabbing; }
+.ep-imgview-wrap img { max-width: 100%; max-height: 100%; transform-origin: center; user-select: none; -webkit-user-drag: none; }
+.ep-imgview-hint { text-align: center; color: var(--text-muted); font-size: var(--font-ui-smaller); margin-top: 8px; }
+
+/* round 15 additions */
+.ep-step-btn, .ep-roll-btn, .ep-set-btn, .ep-mode-btn, .ep-tool-btn, .ep-mini-btn, .ep-edit-toggle { height: calc(var(--ep-size-value, var(--font-ui-small)) + 10px); min-height: 22px; line-height: 1; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+.ep-highlighting .ep-section { opacity: .3; transition: opacity .35s ease; }
+.ep-highlighting .ep-section.ep-has-highlight { opacity: 1; }
+.ep-drag-clone { box-shadow: 0 8px 24px rgba(0,0,0,.4); border-radius: 6px; opacity: .9; background: var(--background-secondary); }
+.ep-drag-placeholder { opacity: .35; outline: 2px dashed var(--interactive-accent); outline-offset: -2px; }
+.ep-swap-target { outline: 2px solid var(--interactive-accent); outline-offset: -2px; border-radius: 6px; }
+.ep-empty-pad { min-height: 30px; border: 1px dashed var(--background-modifier-border); border-radius: 6px; background: transparent; }
+.ep-popup { position: fixed; z-index: 10000; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 10px 28px rgba(0,0,0,.35); max-height: 60vh; overflow: auto; padding: 4px; font-size: var(--font-ui-small); }
+.ep-pop-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.ep-pop-row:hover { background: var(--background-modifier-hover); }
+.ep-pop-create { font-style: italic; color: var(--text-muted); }
+.ep-side-title { font-weight: 700; padding: 2px 8px 4px; }
+.ep-side-body { max-height: 38vh; overflow: auto; }
+.ep-side-custom { width: calc(100% - 8px); margin: 4px; }
+.ep-side-foot { position: sticky; bottom: 0; background: var(--background-secondary); padding: 4px; }
+.ep-side-foot button { width: 100%; }
+.ep-list-addbtn { width: auto; }
+/* Outside edit mode the add button is an affordance, not a control to notice:
+   quiet until the row is hovered or it takes focus. */
+.ep-list-addbtn-quiet { opacity: .45; transition: opacity .15s ease; }
+.ep-entry:hover .ep-list-addbtn-quiet,
+.ep-list-addbtn-quiet:focus-visible { opacity: 1; }
+/* A long-form text value keeps its line breaks and wraps instead of clipping. */
+.ep-val-multiline { white-space: pre-wrap; text-align: left; }
+/* The growing editor: full width, no manual resize handle fighting the auto-fit. */
+.ep-edit-area { width: 100%; resize: none; overflow-y: auto; line-height: 1.4; }
+
+/* round 16 additions */
+.ep-sidebar { --ep-radius: 6px; }
+.ep-section, .ep-popup, .ep-image-img, .ep-iframe-wrap, .ep-imgview-wrap, .ep-entry, .ep-chip, .ep-swatch, .ep-edit-input, .ep-add-input, .ep-step-btn, .ep-roll-btn, .ep-mode-btn, .ep-tool-btn, .ep-mini-btn, .ep-edit-toggle, .ep-empty-pad, .ep-empty-cell { border-radius: var(--ep-radius, 6px); }
+
+/* column / row add rails */
+.ep-gridflex { display: flex; align-items: stretch; gap: 2px; }
+.ep-gridflex > .ep-grid { flex: 1; min-width: 0; }
+.ep-colrail { display: flex; justify-content: space-between; height: 9px; margin: 2px 0; }
+.ep-rowrail { display: flex; flex-direction: column; justify-content: space-between; width: 9px; }
+.ep-addbar { display: flex; align-items: center; justify-content: center; color: var(--text-faint); cursor: pointer; border-radius: 5px; background: var(--background-modifier-border-hover); transition: background .15s ease, transform .15s ease; }
+.ep-colrail .ep-addbar { width: 16px; height: 7px; }
+.ep-colrail .ep-addbar:hover { height: 16px; transform: translateY(-4px); background: var(--interactive-accent); color: var(--text-on-accent); }
+.ep-rowrail .ep-addbar { width: 7px; flex: 1; margin: 1px 0; }
+.ep-rowrail .ep-addbar:hover { width: 16px; background: var(--interactive-accent); color: var(--text-on-accent); }
+.ep-addbar-plus { display: inline-flex; }
+.ep-addbar-plus svg { width: 9px; height: 9px; }
+
+/* blanks */
+.ep-blank { min-height: 24px; }
+.ep-editing .ep-blank { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 2px 4px; border: 1px dashed var(--background-modifier-border); opacity: .65; cursor: pointer; }
+.ep-editing .ep-blank:hover { opacity: 1; background: var(--background-modifier-hover); }
+
+/* vertical dividers */
+.ep-grid.ep-vdividers.ep-mode-columns > .ep-col:not(:last-child) { border-right: 1px solid var(--background-modifier-border-hover); padding-right: 6px; }
+.ep-grid.ep-vdividers.ep-mode-grid > .ep-col, .ep-grid.ep-vdividers.ep-mode-grid > .ep-empty-cell { border-right: 1px solid var(--background-modifier-border-hover); }
+/* A divider belongs BETWEEN side-by-side cells: the cell that ends a visual
+   row has nothing to its right, and a one-column section has no pairs at all
+   (both cases would otherwise draw a line beside every property). */
+.ep-grid.ep-vdividers > .ep-rowend { border-right: none; padding-right: 0; }
+.ep-grid.ep-vdividers.ep-onecol > .ep-col,
+.ep-grid.ep-vdividers.ep-onecol > .ep-empty-cell { border-right: none; padding-right: 0; }
+
+/* add menu groups / badges / search / pads */
+.ep-pop-group { font-weight: 700; font-size: var(--font-ui-smaller); color: var(--text-accent); padding: 5px 8px 2px; text-transform: uppercase; letter-spacing: .04em; }
+/* Data-type sub-groups within a picker group (On this note -> number, text, ...). */
+.ep-pop-subgroup { font-style: italic; font-size: 0.78em; color: var(--text-faint); padding: 4px 10px 1px; }
+/* Autofill-pool editor rows: value, usage tag, remove button. */
+.ep-pool-row { display: flex; align-items: center; gap: 8px; }
+.ep-pool-row .ep-pool-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ep-pool-x { flex: 0 0 auto; }
+/* Data-type tag beside a suggested property (mirrors the sidebar type hint). */
+.ep-sug-type { margin-left: 8px; font-style: italic; font-size: 0.78em; color: var(--text-faint); }
+.ep-badge-hidden { background: var(--background-modifier-error); color: var(--text-on-accent); }
+.ep-addsearch { width: calc(100% - 8px); margin: 2px 4px 4px; }
+.ep-addlist { max-height: 46vh; overflow: auto; }
+.ep-addbtn { text-align: left; cursor: text; color: var(--text-faint); justify-content: flex-start; }
+.ep-coladd { width: 100%; margin-top: 4px; opacity: .75; }
+.ep-empty-pad { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ep-pad-plus { display: inline-flex; opacity: .4; }
+.ep-pad-plus svg { width: 14px; height: 14px; }
+.ep-empty-pad:hover { background: var(--background-modifier-hover); }
+.ep-empty-pad:hover .ep-pad-plus { opacity: 1; }
+
+/* popup animations */
+@keyframes ep-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes ep-pop-out { to { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.ep-popup { animation: ep-pop-in .14s ease; }
+.ep-popup.ep-closing { animation: ep-pop-out .14s ease forwards; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .ep-popup { animation: none; transition: none; } }
+
+/* round 17 additions */
+.ep-pad-plus { display: inline-flex; align-items: center; opacity: .5; font-size: var(--font-ui-smaller); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-empty-pad:hover .ep-pad-plus { opacity: 1; }
+.ep-val-right a, .ep-chip a, .ep-line-name a { color: var(--link-color, var(--text-accent)); text-decoration: var(--link-decoration, none); cursor: pointer; }
+.ep-val-right a:hover, .ep-chip a:hover { text-decoration: underline; }
+
+/* round 18 additions - square add bars + per row/col remove */
+.ep-colrail { display: flex; align-items: center; height: 14px; }
+.ep-rowrail { display: flex; flex-direction: column; align-items: center; width: 14px; }
+.ep-colrail .ep-addbar, .ep-rowrail .ep-addbar { width: 14px; height: 14px; min-width: 14px; flex: 0 0 14px; border-radius: 4px; }
+.ep-colrail .ep-addbar:hover, .ep-rowrail .ep-addbar:hover { height: 14px; width: 14px; transform: none; }
+.ep-addbar svg { width: 10px; height: 10px; }
+.ep-railslot { flex: 1; display: flex; align-items: center; justify-content: center; }
+.ep-rmbar { width: 14px; height: 14px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-faint); cursor: pointer; opacity: .45; transition: opacity .15s ease, background-color .15s ease, color .15s ease; }
+.ep-rmbar:hover { opacity: 1; background: var(--background-modifier-error); color: var(--text-on-accent); }
+.ep-rmbar svg { width: 10px; height: 10px; }
+
+/* Dice notation tag - muted, abbreviation-style, shown before modifiers. */
+.ep-dice-tag {
+  opacity: 0.75;
+  font-size: 0.85em;
+  margin-right: 4px;
+}
+.ep-mod-badge .ep-dice-tag {
+  margin-right: 3px;
+}
+
+/* round 19 additions - the influence engine (denotations, toggles, editor) */
+.ep-denote { display: inline-flex; align-items: center; gap: 1px; margin-right: 4px; white-space: nowrap; }
+.ep-denote .ep-line-abbr { width: auto; text-align: left; }
+.ep-denote-op { font-size: 0.85em; color: var(--text-faint); padding: 0 1px; }
+.ep-denote-off { opacity: 0.4; text-decoration: line-through; }
+.ep-den-cell { justify-content: flex-end; }
+.ep-tog-cell { gap: 3px; }
+.ep-roll-cell .ep-dice-tag { margin-right: 4px; }
+.ep-options .ep-mods-sub { padding-left: 18px; }
+.ep-options .ep-mods-sub .setting-item-name { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.ep-options .ep-abbr-input { width: 4.5em; }
+
+/* round 20 additions - alignment, viewport fitting, insertion lines, mobile */
+/* breathing room below the last section */
+.ep-sidebar { padding-bottom: 96px; }
+/* toggle checkboxes right-aligned, in modifier order */
+.ep-tog-cell { justify-content: flex-end; gap: 3px; }
+/* section drag: insertion line between sections (like the grid markers) */
+.ep-section { position: relative; }
+.ep-section.ep-drop-top, .ep-section.ep-drop-bottom { box-shadow: none; }
+.ep-section.ep-drop-top::before, .ep-section.ep-drop-bottom::after {
+  content: ""; position: absolute; left: 4px; right: 4px; height: 3px;
+  border-radius: 2px; background: var(--interactive-accent);
+  pointer-events: none; z-index: 5;
+}
+.ep-section.ep-drop-top::before { top: -7px; }
+.ep-section.ep-drop-bottom::after { bottom: -7px; }
+/* grips drive pointer drags - keep touch from scrolling instead */
+.ep-grip { touch-action: none; }
+/* larger touch targets */
+@media (pointer: coarse) {
+  .ep-mini-btn { padding: 4px 10px; }
+  .ep-menu-btn, .ep-icon-btn { padding: 4px 6px; }
+  .ep-prof { width: 20px; height: 20px; }
+  .ep-colrail { height: 24px; }
+  .ep-rowrail { width: 24px; }
+  .ep-colrail .ep-addbar, .ep-rowrail .ep-addbar { width: 22px; height: 22px; min-width: 22px; flex: 0 0 22px; }
+  .ep-rmbar { width: 22px; height: 22px; opacity: .6; }
+  .ep-addbar svg, .ep-rmbar svg { width: 14px; height: 14px; }
+  .ep-pop-row { padding: 8px 10px; }
+  .ep-line { padding: 6px 2px; }
+  .ep-edit-toggle, .ep-tool-btn, .ep-add-input { min-height: 32px; }
+  .ep-grip { padding: 0 8px; }
+  .ep-section.ep-drop-top::before, .ep-section.ep-drop-bottom::after { height: 4px; }
+}
+
+/* round 21 additions - measured rails, dimmed inactive inputs */
+/* rail buttons are absolutely positioned on measured cell boundaries/centers */
+.ep-colrail { position: relative; display: block; height: 16px; margin: 2px 0; }
+.ep-rowrail { position: relative; display: block; width: 16px; flex: 0 0 16px; }
+.ep-colrail .ep-addbar, .ep-colrail .ep-rmbar { position: absolute; top: 50%; transform: translate(-50%, -50%); }
+.ep-rowrail .ep-addbar, .ep-rowrail .ep-rmbar { position: absolute; left: 50%; transform: translate(-50%, -50%); }
+.ep-rowrail .ep-addbar, .ep-rowrail .ep-rmbar, .ep-colrail .ep-addbar, .ep-colrail .ep-rmbar { margin: 0; flex: none; }
+input.ep-disabled, .ep-edit-input.ep-disabled { opacity: 0.4; }
+@media (pointer: coarse) {
+  .ep-colrail { height: 26px; }
+  .ep-rowrail { width: 26px; flex-basis: 26px; }
+}
+
+/* round 22 additions - tabs, dividers, hover fix, dice joining, type hints */
+/* hover must not cancel the centering transform of measured rail buttons */
+.ep-colrail .ep-addbar:hover { width: 14px; height: 14px; transform: translate(-50%, -50%); }
+.ep-rowrail .ep-addbar:hover { width: 14px; height: 14px; transform: translate(-50%, -50%); }
+@media (pointer: coarse) {
+  .ep-colrail .ep-addbar:hover, .ep-rowrail .ep-addbar:hover { width: 22px; height: 22px; }
+}
+/* grid dividers also between empty cells */
+.ep-grid.ep-dividers.ep-mode-grid > .ep-empty-cell:not(.ep-empty-pad) { border-bottom: 1px solid var(--background-modifier-border-hover); border-radius: 0; }
+.ep-grid.ep-dividers.ep-mode-grid > .ep-empty-cell:last-child { border-bottom: none; }
+/* dice + modifier read as one string (each keeps its own formatting) */
+.ep-mod-badge .ep-dice-tag, .ep-den-cell .ep-dice-tag { margin-right: 0; }
+.ep-den-cell { justify-content: flex-end; }
+.ep-num.ep-num-join { text-align: left; }
+.ep-num.ep-overridden { border-bottom: 1px dotted currentColor; }
+/* datatype hint beside labels (auto-removed when space is tight) */
+.ep-line-name .ep-type-hint { font-style: italic; font-size: 0.78em; color: var(--text-faint); margin-left: 5px; font-weight: 400; }
+/* Unit suffix after a numeric value - muted like the type hint, but it reads
+   as data (kg, ft, %), so slightly stronger and upright. */
+.ep-unit-hint { font-size: 0.78em; color: var(--text-muted); margin-left: 4px; font-weight: 400; }
+/* List chip alignment (per-entry option; left is the default flex start). */
+.ep-list-holder.ep-align-center .ep-list { justify-content: center; }
+.ep-list-holder.ep-align-right .ep-list { justify-content: flex-end; }
+/* Embedded players (audio / video / pdf value types). */
+.ep-audio, .ep-video, .ep-pdf { width: 100%; }
+.ep-audio-el { width: 100%; display: block; }
+.ep-audio-frame { width: 100%; height: 152px; border: none; border-radius: 8px; }
+.ep-video-el { width: 100%; display: block; border-radius: 8px; background: #000; object-fit: contain; }
+/* Scale > 1 zooms media inside its (clipped) box. */
+.ep-media-zoom { overflow: hidden; }
+.ep-media-zoom .ep-image-img, .ep-media-zoom .ep-video-el { transform-origin: center center; }
+.ep-video-framewrap { position: relative; width: 100%; aspect-ratio: 16 / 9; }
+.ep-video-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; border-radius: 8px; }
+.ep-pdf-frame { width: 100%; height: 100%; border: none; border-radius: 8px; }
+/* tabs in the section options modal */
+.ep-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+.ep-tab { padding: 2px 10px; font-size: var(--font-ui-smaller); cursor: pointer; border-radius: 10px; background: var(--background-modifier-hover); color: var(--text-muted); user-select: none; }
+.ep-tab:hover { color: var(--text-normal); }
+.ep-tab.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+
+/* round 23 additions - responsive squeezing, tab columns, divider-free settings */
+/* decorations hidden by the width-responsive pass */
+.ep-squeezed.ep-squeezed { display: none; }
+/* column labels in the tab bar (Columns layout) */
+.ep-tab-collabel { font-size: var(--font-ui-smaller); color: var(--text-faint); font-style: italic; padding: 2px 4px; align-self: center; }
+.ep-tabs + .ep-tabs { margin-top: 0; }
+/* no dividers between settings in the plugin settings tab either */
+.ep-settings .setting-item { border-top: none; }
+
+/* round 24 additions - dice icons, chain toggling, grid divider alignment */
+/* truly divider-free options & settings (override theme borders) */
+.ep-options .setting-item.setting-item, .ep-settings .setting-item.setting-item { border-top: none; }
+/* die pictogram preceding the dice breakdown */
+.ep-dice-ico { display: inline-flex; align-items: center; margin-right: 2px; vertical-align: -1px; }
+.ep-dice-ico svg { width: 12px; height: 12px; }
+.ep-roll-btn .ep-dice-ico svg { width: 13px; height: 13px; }
+/* chain terms with a toggle list are interactive */
+.ep-denote-tog { cursor: pointer; }
+.ep-denote-tog:hover { color: var(--text-normal); }
+/* tab group selector */
+.ep-tab-groupsel { font-size: var(--font-ui-smaller); margin-left: auto; height: 24px; padding: 0 4px; }
+/* grid: cells stretch to the row, so dividers align to the row's lowest
+   point; empty cells keep a row-height minimum outside edit mode too */
+.ep-grid.ep-mode-grid { align-items: stretch; }
+.ep-grid.ep-mode-grid > .ep-empty-cell { min-height: 28px; }
+
+/* round 25 additions - stacked dice tag, multi-edit note, roll animation */
+/* die icon stacked above the notation, both centered */
+.ep-dice-tag.ep-dice-stack { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+.ep-dice-stack .ep-dice-ico { margin: 0; }
+.ep-multi-note { border-left: 2px solid var(--interactive-accent); padding-left: 8px; }
+/* roll overlay */
+.ep-roll-overlay { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); animation: ep-fade .15s ease; cursor: pointer; }
+.ep-roll-overlay.ep-closing { animation: ep-pop-out .15s ease forwards; pointer-events: none; }
+.ep-roll-box { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 12px; padding: 18px 28px; display: flex; flex-direction: column; align-items: center; gap: 12px; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); }
+.ep-roll-label { font-weight: 700; }
+/* one clipped row; the track inside slides left as dice settle (see dice-anim.ts) */
+.ep-roll-dice { display: flex; overflow: hidden; position: relative; max-width: 420px; }
+.ep-roll-dice-track { display: flex; flex: 0 0 auto; flex-wrap: nowrap; gap: 14px; margin: auto; transition: transform .35s cubic-bezier(.22, .61, .36, 1); will-change: transform; }
+/* once anything has scrolled, fade dice out as they cross the left edge of the node */
+.ep-roll-dice.ep-overflow { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 32px, #000 100%); mask-image: linear-gradient(to right, transparent 0, #000 32px, #000 100%); }
+@media (prefers-reduced-motion: reduce) { .ep-roll-dice-track { transition: none; } }
+.ep-roll-die { position: relative; flex: 0 0 auto; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; transform-style: preserve-3d; }
+.ep-roll-die-ico { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
+.ep-roll-die-ico svg { width: 64px; height: 64px; }
+.ep-roll-die-num { position: relative; font-weight: 800; font-size: 1.3em; font-variant-numeric: tabular-nums; }
+.ep-roll-die.ep-rolling { animation: ep-tumble .45s linear infinite; }
+@keyframes ep-tumble { from { transform: rotate3d(1, 1, 0, 0deg); } to { transform: rotate3d(1, 1, 0, 360deg); } }
+.ep-roll-die.ep-settled { animation: ep-pop .25s ease; }
+.ep-roll-sum { min-height: 1.7em; display: flex; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+.ep-roll-sum .ep-roll-mod { opacity: 0; transform: translateX(-8px); transition: opacity .25s ease, transform .25s ease; color: var(--text-muted); }
+.ep-roll-sum .ep-roll-mod.ep-in { opacity: 1; transform: none; }
+.ep-roll-sum .ep-roll-total { font-weight: 800; font-size: 1.3em; opacity: 0; transition: opacity .25s ease; }
+.ep-roll-sum .ep-roll-total.ep-in { opacity: 1; animation: ep-pop .25s ease; }
+@media (prefers-reduced-motion: reduce) { .ep-roll-die.ep-rolling, .ep-roll-die.ep-settled, .ep-roll-overlay { animation: none; } }
+
+/* modular dice animation styles: spin + 3d cube, plus card resize */
+.ep-roll-die.ep-spin .ep-roll-die-ico { opacity: 0.35; animation: ep-spin .5s linear infinite; }
+/* The number stays visible while spinning - it cycles random faces (JS-paced,
+   decelerating) instead of hiding until the landing. */
+@keyframes ep-spin { to { transform: rotate(360deg); } }
+/* each 3D die is a self-contained perspective scene (flat container + perspective),
+   so dice never share a vanishing point and don't stretch when off-centre in the row */
+.ep-roll-die.ep-die3d { perspective: 520px; transform-style: flat; }
+.ep-cube { position: relative; width: 64px; height: 64px; transform-style: preserve-3d; transition: transform .14s linear; }
+.ep-cube.ep-cube-land { transition: transform .45s cubic-bezier(.2, .8, .3, 1); }
+.ep-cube-face { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.3em; font-variant-numeric: tabular-nums; color: var(--text-normal); background: var(--background-secondary); border: 2px solid var(--ep-accent-default, var(--text-accent)); border-radius: 10px; box-shadow: inset 0 0 12px rgba(0, 0, 0, .25); }
+.ep-cube-front { transform: translateZ(32px); }
+.ep-cube-back { transform: rotateY(180deg) translateZ(32px); }
+.ep-cube-right { transform: rotateY(90deg) translateZ(32px); }
+.ep-cube-left { transform: rotateY(-90deg) translateZ(32px); }
+.ep-cube-top { transform: rotateX(90deg) translateZ(32px); }
+.ep-cube-bottom { transform: rotateX(-90deg) translateZ(32px); }
+/* generic polyhedron solid (d4/d8/d10/d12/d20 - faces placed via matrix3d) */
+.ep-solid { position: relative; width: 64px; height: 64px; transform-style: preserve-3d; transition: transform .14s linear; }
+.ep-solid.ep-solid-land { transition: transform .5s cubic-bezier(.2, .8, .3, 1); }
+.ep-solid-face { position: absolute; inset: 0; }
+/* edge layer (full polygon) shows as an outline behind the inset fill layer */
+.ep-solid-edge { position: absolute; inset: 0; background: var(--text-faint); }
+.ep-solid-fill { position: absolute; inset: 0; background: var(--background-secondary); box-shadow: inset 0 0 10px rgba(0, 0, 0, .25); }
+/* number sits above the clipped layers (never clipped) and is rotated per face */
+.ep-solid-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.05em; font-variant-numeric: tabular-nums; color: var(--text-faint); }
+/* the face the die landed on (facing up) is highlighted; the rest stay dim grey */
+.ep-solid-face.ep-solid-on .ep-solid-edge { background: var(--ep-accent-default, var(--text-accent)); }
+.ep-solid-face.ep-solid-on .ep-solid-num { color: var(--text-normal); }
+/* card grows smoothly as result rows are added (native size interpolation) */
+.ep-roll-layer { interpolate-size: allow-keywords; }
+.ep-roll-box { transition: width .2s ease-out, height .2s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .ep-roll-die.ep-spin .ep-roll-die-ico { animation: none; }
+  .ep-cube, .ep-cube.ep-cube-land, .ep-solid, .ep-solid.ep-solid-land { transition: none; }
+}
+
+/* round 26 additions - pinnable roll cards, value chain, fading decorations */
+/* non-blocking layer hosting (possibly several) roll cards */
+/* Cards center on the screen; --ep-roll-reserve keeps them clear of the
+   bottom summary dialog (measured live in dice-anim.ts, so an expanded
+   settings panel pushes the cards up rather than under it). */
+/* Above everything the plugin puts on screen, the settings timeline included:
+   a roll is the one thing that is always the answer to what the reader just
+   did, and a navigation strip drawn over the dice is a strip covering the only
+   part of the screen anybody is looking at. */
+.ep-roll-layer { position: fixed; inset: 0; z-index: 10002; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; padding-bottom: var(--ep-roll-reserve, 150px); transition: padding-bottom .25s ease; }
+@media (prefers-reduced-motion: reduce) { .ep-roll-layer { transition: none; } }
+/* centered, vertically scrollable card host (margin auto = center while small) */
+/* cards lay out in a single horizontal row; scroll left to reach previous rolls */
+.ep-roll-cards { margin: 0; display: flex; flex-wrap: nowrap; gap: 16px; align-items: center; justify-content: flex-start; padding: 24px; overflow-x: auto; overflow-y: auto; max-width: 100vw; max-height: 100%; pointer-events: auto; }
+/* mobile: wrap roll cards into as many columns as fit the screen and scroll
+   vertically, instead of one ever-growing horizontal row */
+body.is-mobile .ep-roll-cards { margin: 0; width: 100%; max-height: 100%; flex-wrap: wrap; align-content: safe center; justify-content: safe center; padding: 16px 12px; overflow-x: hidden; overflow-y: auto; }
+.ep-roll-layer .ep-roll-box { pointer-events: auto; cursor: pointer; animation: ep-fade .15s ease; }
+.ep-roll-layer .ep-roll-box.ep-closing { animation: ep-pop-out .15s ease forwards; pointer-events: none; }
+.ep-roll-box.ep-pinned { border-color: var(--interactive-accent); box-shadow: 0 0 0 2px var(--interactive-accent), 0 18px 48px rgba(0, 0, 0, 0.5); }
+/* dice dimmer so the cycling number reads clearly */
+.ep-roll-die-ico { opacity: 0.3; }
+/* the addition chain: value cells with origin labels underneath */
+.ep-roll-chain { display: flex; align-items: flex-start; gap: 7px; flex-wrap: wrap; justify-content: center; min-height: 2.8em; max-width: 420px; }
+.ep-roll-op { font-weight: 700; color: var(--text-faint); padding-top: 0.05em; }
+/* scoped to the card chain - ".ep-roll-cell" alone is the sidebar's roll-button slot! */
+.ep-roll-chain .ep-roll-cell { display: flex; flex-direction: column; align-items: center; opacity: 0; transform: translateY(6px); transition: opacity .22s ease, transform .22s ease; }
+.ep-roll-chain .ep-roll-cell.ep-in { opacity: 1; transform: none; }
+.ep-roll-chain .ep-roll-cellval { font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.ep-roll-chain .ep-roll-celllab { font-size: var(--font-ui-smaller); color: var(--text-faint); font-style: italic; line-height: 1.1; }
+.ep-roll-chain .ep-roll-totalcell .ep-roll-cellval { font-size: 1.35em; }
+/* roll-options popup (right-click on a roll button) */
+.ep-rollmenu { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+/* Setting a section's properties: the sidebar's own rows, in a panel. */
+.ep-setpop { padding: 8px; min-width: 20em; max-width: min(28em, 90vw); }
+.ep-setpop-group { margin: 8px 0 2px; color: var(--text-muted); font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: .04em; }
+.ep-setpop-group:first-child { margin-top: 0; }
+.ep-setpop-note { margin-top: 8px; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.ep-rollmenu-count { display: flex; align-items: center; gap: 8px; font-size: var(--font-ui-smaller); }
+.ep-rollmenu-count .ep-edit-input { width: 4.5em; }
+/* decorations fade out (label and value always keep their room) */
+.ep-type-hint, .ep-entry-head .ep-denote, .ep-entry-head .ep-dice-tag { max-width: 16em; transition: max-width .25s ease, opacity .25s ease; }
+.ep-squeezed.ep-squeezed { display: inline-flex; max-width: 0; opacity: 0; margin: 0; padding: 0; overflow: hidden; pointer-events: none; }
+.ep-measuring .ep-squeezed.ep-squeezed { display: none; }
+.ep-measuring .ep-type-hint.ep-type-hint, .ep-measuring .ep-denote.ep-denote, .ep-measuring .ep-dice-tag.ep-dice-tag { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ep-roll-chain .ep-roll-cell, .ep-type-hint, .ep-entry-head .ep-denote, .ep-entry-head .ep-dice-tag { transition: none; }
+}
+
+/* round 27 additions - priority squeezing, dropped dice, close-all, dice roller */
+/* chain values share one line, so dice, modifiers and the total align */
+.ep-roll-chain .ep-roll-cellval, .ep-roll-chain .ep-roll-op { height: 28px; display: flex; align-items: center; padding-top: 0; }
+/* the dropped (ignored) advantage/disadvantage die - visible but dimmed */
+.ep-roll-die.ep-roll-drop { opacity: 0.35; }
+.ep-roll-die.ep-roll-drop .ep-roll-die-num { text-decoration: line-through; }
+.ep-roll-chain .ep-roll-cell.ep-roll-dropped { opacity: 0.45; }
+.ep-roll-chain .ep-roll-cell.ep-roll-dropped .ep-roll-cellval { text-decoration: line-through; }
+/* dismiss-all button on the roll layer */
+.ep-roll-layer .ep-roll-closeall { position: absolute; top: 14px; right: 18px; pointer-events: auto; cursor: pointer; font-size: var(--font-ui-smaller); padding: 4px 12px; border-radius: 999px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); color: var(--text-muted); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+.ep-roll-layer .ep-roll-closeall:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
+/* responsive priority: toggle boxes and the modifier badge may squeeze too
+   (after datatype, dice and chain; label, value and roll button never do) */
+.ep-entry-head .ep-tog-cell, .ep-entry-head .ep-mod-badge { transition: max-width 0.25s ease, opacity 0.25s ease; }
+.ep-measuring .ep-tog-cell.ep-tog-cell, .ep-measuring .ep-mod-badge.ep-mod-badge { transition: none; }
+/* dice roller widget */
+.ep-roller { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.ep-roller-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ep-roller-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); cursor: pointer; font-variant-numeric: tabular-nums; }
+.ep-roller-chip:hover { border-color: var(--interactive-accent); }
+.ep-roller-x { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.ep-roller-x:hover { color: var(--text-error); }
+.ep-roller-numedit { width: 4em; }
+.ep-roller-add { font-size: var(--font-ui-smaller); padding: 2px 8px; border-radius: 999px; background: transparent; border: 1px dashed var(--background-modifier-border); color: var(--text-muted); cursor: pointer; box-shadow: none; }
+.ep-roller-add:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
+.ep-roller-expr { display: flex; }
+.ep-roller-exprinput { width: 100%; font-family: var(--font-monospace); }
+.ep-roller-fns { display: flex; flex-wrap: wrap; gap: 4px; }
+.ep-roller-fn { font-size: var(--font-ui-smaller); font-family: var(--font-monospace); padding: 1px 7px; border-radius: 6px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); color: var(--text-muted); cursor: pointer; box-shadow: none; }
+.ep-roller-fn:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
+.ep-roller-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ep-roller-times { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.ep-roller-times input { width: 4em; }
+@media (prefers-reduced-motion: reduce) { .ep-entry-head .ep-tog-cell, .ep-entry-head .ep-mod-badge { transition: none; } }
+
+/* round 28 additions - blocking backdrop, result summary window, clickable log */
+/* optional: dim the background and swallow clicks while roll cards are up */
+.ep-roll-layer.ep-roll-block { pointer-events: auto; background: rgba(0, 0, 0, 0.55); }
+/* bottom-center window: dismiss-all + the result-distribution slider */
+.ep-roll-summary { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 12px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); max-width: min(92vw, 480px); max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; }
+/* The dialog slides up + fades on its first appearance. */
+.ep-roll-summary.ep-sum-in { animation: ep-sum-in .28s cubic-bezier(.2, .8, .3, 1); }
+@keyframes ep-sum-in {
+  from { opacity: 0; transform: translate(-50%, 26px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .ep-roll-summary.ep-sum-in { animation: none; } }
+/* Expanded settings on mobile: up to half the screen, scrollable, with the
+   (reserve-pushed) dice cards staying visible above the panel. */
+body.is-mobile .ep-roll-summary { max-width: 96vw; }
+body.is-mobile .ep-roll-summary.ep-sum-open { max-height: 50vh; }
+/* Expandable roll settings inside the summary dialog. */
+.ep-roll-sum-settings { width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.ep-roll-sum-toggle { display: flex; align-items: center; gap: 6px; justify-content: center; background: none; border: none; box-shadow: none; padding: 4px 8px; font-size: var(--font-ui-smaller); color: var(--text-muted); cursor: pointer; }
+.ep-roll-sum-toggle:hover { color: var(--text-normal); }
+.ep-roll-sum-toggle .ep-chev { display: inline-flex; transition: transform .15s ease; }
+.ep-roll-sum-toggle .ep-chev.ep-open { transform: rotate(90deg); }
+/* Accordion: the grid row interpolates 0fr<->1fr, so opening/closing the panel
+   animates the dialog's height instead of jumping. */
+.ep-roll-sum-acc { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s ease; width: 100%; }
+.ep-roll-sum-settings.ep-open .ep-roll-sum-acc { grid-template-rows: 1fr; }
+.ep-roll-sum-clip { overflow: hidden; min-height: 0; visibility: hidden; transition: visibility 0s .22s; }
+.ep-roll-sum-settings.ep-open .ep-roll-sum-clip { visibility: visible; transition: visibility 0s; }
+.ep-roll-sum-body { display: grid; width: 100%; grid-template-columns: auto 1fr; align-items: center; gap: 8px 12px; padding: 6px 4px 2px; border-top: 1px solid var(--background-modifier-border); }
+@media (prefers-reduced-motion: reduce) { .ep-roll-sum-acc { transition: none; } }
+.ep-roll-sum-body label { font-size: var(--font-ui-smaller); color: var(--text-muted); white-space: nowrap; }
+.ep-roll-sum-body select, .ep-roll-sum-body input[type="range"] { width: 100%; min-height: 24px; }
+/* Mobile: larger touch targets for the panel controls. */
+body.is-mobile .ep-roll-sum-body select, body.is-mobile .ep-roll-sum-body input[type="range"] { min-height: 34px; }
+body.is-mobile .ep-roll-sum-body input[type="checkbox"] { width: 22px; height: 22px; }
+body.is-mobile .ep-roll-sum-toggle { min-height: 34px; }
+.ep-roll-sum-top { display: flex; align-items: center; gap: 12px; }
+.ep-roll-sum-val { font-weight: 800; font-size: 1.2em; font-variant-numeric: tabular-nums; min-width: 2em; text-align: center; }
+.ep-roll-sum-dismiss { font-size: var(--font-ui-smaller); padding: 3px 10px; border-radius: 999px; cursor: pointer; }
+.ep-roll-sum-slider { width: 200px; max-width: 80vw; }
+.ep-roll-sum-groups { display: flex; gap: 20px; align-items: flex-start; justify-content: center; }
+.ep-roll-sum-group { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 64px; }
+.ep-roll-sum-head { font-size: var(--font-ui-smaller); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* one mini die per roll, stacked in 6-high columns */
+.ep-roll-sum-dice { display: grid; grid-auto-flow: column; grid-template-rows: repeat(6, 22px); gap: 3px; height: calc(6 * 22px + 5 * 3px); }
+.ep-roll-sum-die { position: relative; width: 22px; height: 22px; transition: transform 0.25s ease; }
+.ep-roll-sum-die .ep-roll-sum-ico { position: absolute; inset: 0; opacity: 0.3; }
+.ep-roll-sum-die .ep-roll-sum-ico svg { width: 100%; height: 100%; }
+.ep-roll-sum-die .ep-roll-sum-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* roll history: chain toggle row + re-rollable entries */
+.ep-log-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
+.ep-log-row.ep-log-click { cursor: pointer; }
+.ep-log-row.ep-log-click:hover { color: var(--text-normal); background: var(--background-modifier-hover); border-radius: 4px; }
+/* the panel holds the whole session history - scroll it */
+.ep-log { max-height: 260px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) { .ep-roll-sum-die { transition: none; } }
+
+/* saved roll macros ("custom roll objects") on the roll screen */
+.ep-macros { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ep-macros-lbl { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-right: 2px; }
+.ep-macro-chip { cursor: pointer; }
+.ep-macro-chip:hover { border-color: var(--interactive-accent); }
+/* invalid macro/expression notation in settings */
+.ep-invalid.ep-invalid { border-color: var(--text-error); }
+/* C1: invalid value marker on value displays (non-blocking) */
+.ep-invalid-mark { box-shadow: 0 0 0 1px var(--text-error); border-radius: 4px; }
+/* expression engine: failed derivations (-) and the inline expression field */
+.ep-expr-error { color: var(--text-error); cursor: help; font-weight: 700; }
+.ep-expr-input { width: 100%; font-family: var(--font-monospace); }
+
+/* inline rolls & properties in note bodies (feature: inline) */
+.ep-inline-roll { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-radius: 999px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); cursor: pointer; font-size: var(--font-ui-smaller); vertical-align: baseline; line-height: 1.6; }
+.ep-inline-roll:hover { border-color: var(--interactive-accent); }
+.ep-inline-roll-ico { display: inline-flex; width: 0.95em; height: 0.95em; opacity: 0.8; }
+.ep-inline-roll-ico svg { width: 100%; height: 100%; }
+.ep-inline-roll-lab { font-variant-numeric: tabular-nums; }
+/* val: chip reuses the roll-chip look, but only its value/link is interactive */
+.ep-inline-valchip { cursor: default; }
+.ep-inline-valchip .ep-inline-editable { cursor: pointer; border-bottom: 1px dotted var(--text-faint); }
+.ep-inline-valchip .ep-inline-editable:hover { border-bottom-color: var(--interactive-accent); color: var(--text-normal); }
+.ep-inline-valchip a { cursor: pointer; }
+/* val: full property name, in small muted text before the value */
+.ep-inline-val-name { font-size: 0.82em; color: var(--text-muted); margin-right: 1px; }
+/* Live Preview fallback when a widget fails to render (never an empty chip) */
+.ep-inline-error { color: var(--text-error); cursor: pointer; font-family: var(--font-monospace); border-bottom: 1px dotted var(--text-error); }
+/* vals: a sidebar-style property card, rendered inline (card class is on the
+   inline-block root itself - no block wrapper that would collapse on mobile) */
+.ep-inline-vals { display: inline-block; vertical-align: middle; max-width: 100%; }
+.ep-inline-vals.ep-entry { gap: 6px; padding: 2px 8px; border: 1px solid var(--background-modifier-border); border-radius: var(--ep-radius, 6px); background: var(--background-secondary); }
+.ep-inline-vals .ep-entry-head { display: flex; align-items: center; gap: 6px; }
+.ep-inline-vals .ep-entry-extra { display: flex; flex-direction: column; gap: 4px; }
+.ep-inline-vals .ep-entry-extra:empty { display: none; }
+.ep-inline-vals .ep-cluster { display: inline-grid; align-items: center; }
+.ep-inline-vals .ep-slider { vertical-align: middle; max-width: 9em; }
+.ep-inline-vals .ep-list { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+
+/* C3 richer value types */
+.ep-rating { display: inline-flex; align-items: center; gap: 1px; }
+.ep-rating-pip { display: inline-flex; width: 1.05em; height: 1.05em; cursor: pointer; opacity: 0.35; }
+.ep-rating-pip svg { width: 100%; height: 100%; }
+.ep-rating-pip.is-on { opacity: 1; color: var(--ep-rating-color, var(--interactive-accent)); }
+.ep-rating-pip:hover { opacity: 0.8; }
+.ep-linkval .ep-link-unresolved, .ep-linkval.ep-link-unresolved a { color: var(--text-error); text-decoration: none; border-bottom: 1px dotted; }
+.ep-unit-suffix { color: var(--text-muted); margin-left: 1px; }
+.ep-date-rel { color: var(--text-muted); font-size: var(--font-ui-smaller); margin-left: 4px; }
+.ep-date-input { width: auto; }
+
+/* E2: mobile bottom-sheet modals + larger touch targets */
+.ep-mobile-sheet.ep-mobile-sheet { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: 100%; max-width: 100%; max-height: 88vh; margin: 0; border-radius: 14px 14px 0 0; }
+.ep-mobile-sheet .modal-content, .ep-mobile-sheet .vertical-tab-content-container { max-height: 80vh; overflow-y: auto; }
+/* widen the cluster's stepper columns to fit the larger mobile touch targets (else they overlap the value) */
+body.is-mobile { --ep-step-col: 30px; }
+body.is-mobile .ep-step-btn { min-width: 30px; min-height: 30px; }
+body.is-mobile .ep-roll-btn, body.is-mobile .ep-set-btn { min-height: 30px; padding: 0 10px; }
+body.is-mobile .ep-rating-pip { width: 1.4em; height: 1.4em; }
+body.is-mobile .ep-chip-x { padding: 0 4px; }
+.ep-inline-prop { display: inline; }
+.ep-inline-editable { cursor: pointer; border-bottom: 1px dotted var(--text-faint); }
+.ep-inline-editable:hover { border-bottom-color: var(--interactive-accent); color: var(--text-normal); }
+.ep-inline-prop .ep-edit-input { width: 6em; }
+/* ep-sheet statblock projection */
+.ep-inline-sheet { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; border: 1px solid var(--background-modifier-border); border-radius: var(--ep-radius, 6px); background: var(--background-secondary); }
+.ep-inline-sheet-sec { display: flex; flex-direction: column; gap: 2px; }
+.ep-inline-sheet-title { font-weight: 700; font-size: var(--font-ui-small); color: var(--text-accent); border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 2px; margin-bottom: 2px; }
+.ep-inline-sheet-row { display: flex; align-items: center; gap: 8px; }
+.ep-inline-sheet-lab { flex: 1; color: var(--text-muted); }
+.ep-inline-sheet-val { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ep-inline-sheet-roll { margin-left: 4px; }
+.ep-inline-note { color: var(--text-faint); font-style: italic; font-size: var(--font-ui-smaller); }
+
+
+/* -- import dialog (D1) ------------------------------------------------------ */
+.ep-import-text {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  margin-bottom: 0.6em;
+}
+.ep-import-err { color: var(--text-error); }
+.ep-import-warn { color: var(--text-warning); }
+
+
+/* -- conditional visibility (C2) -------------------------------------------- */
+/* In edit mode, entries/sections whose `showWhen` is currently false are shown
+   dimmed (and dashed) so the condition stays reachable; outside edit mode they
+   are not rendered at all. */
+.ep-cond-off { opacity: 0.5; }
+.ep-editing .ep-cond-off {
+  outline: 1px dashed var(--background-modifier-border);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+
+/* -- type table view (B3) --------------------------------------------------- */
+.ep-table-view { padding: 8px 12px; }
+.ep-table-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.ep-table-filter { flex: 1; min-width: 120px; }
+.ep-table-count { color: var(--text-muted); font-size: var(--font-ui-smaller); margin-left: auto; }
+.ep-table-scroll { overflow: auto; max-height: calc(100vh - 120px); }
+table.ep-table { border-collapse: collapse; width: 100%; font-size: var(--font-ui-small); }
+.ep-table th, .ep-table td { border: 1px solid var(--background-modifier-border); padding: 4px 8px; text-align: left; white-space: nowrap; }
+.ep-table thead th { position: sticky; top: 0; background: var(--background-secondary); z-index: 1; }
+.ep-sortable { cursor: pointer; user-select: none; }
+.ep-sort-asc::after { content: " \25b2"; opacity: 0.6; font-size: 0.8em; }
+.ep-sort-desc::after { content: " \25bc"; opacity: 0.6; font-size: 0.8em; }
+.ep-table-link { cursor: pointer; color: var(--text-accent); }
+.ep-table tbody tr:hover { background: var(--background-modifier-hover); }
+.ep-table-cell { cursor: text; }
+.ep-table-edit { width: 100%; box-sizing: border-box; }
+.ep-table-more { color: var(--text-muted); font-size: var(--font-ui-smaller); padding: 6px 2px; }
+
+
+/* -- type table view (B3): rich cells, resize, virtualization --------------- */
+.ep-table th, .ep-table td { overflow: hidden; text-overflow: ellipsis; max-width: 480px; }
+.ep-table-col { position: relative; }
+/* The header label is a real <button> (keyboard sort); pointer-events stay off
+   so mouse clicks keep hitting the th's single sort handler. Keyboard
+   activation dispatches a click that bubbles to the same handler. */
+.ep-th-label {
+  pointer-events: none;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.ep-th-label:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.ep-editable-cell:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.ep-col-resize:focus-visible { background: var(--interactive-accent); opacity: 0.7; outline: none; }
+.ep-table-namecol { width: 220px; }
+.ep-table-cell { cursor: default; }
+.ep-editable-cell { cursor: text; }
+.ep-col-resize { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; }
+.ep-col-resize:hover { background: var(--interactive-accent); opacity: 0.5; }
+.ep-cell-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ep-cell-rating { letter-spacing: 1px; color: var(--ep-rating-color, var(--text-accent)); }
+.ep-cell-swatch { display: inline-block; width: 0.9em; height: 0.9em; border-radius: 3px; border: 1px solid var(--background-modifier-border); vertical-align: -1px; margin-right: 4px; }
+.ep-cell-muted { color: var(--text-muted); }
+.ep-cell-chip { display: inline-block; background: var(--ep-chip-bg, var(--background-modifier-hover)); color: var(--ep-chip-fg, inherit); border-radius: var(--ep-chip-radius, var(--ep-radius, 4px)); padding: 0 6px; margin: 0 3px 0 0; font-size: 0.92em; }
+.ep-cell-img { max-height: 22px; max-width: 60px; border-radius: 3px; vertical-align: middle; }
+.ep-table-roll { margin-left: 6px; padding: 0 4px; cursor: pointer; opacity: 0.7; background: transparent; box-shadow: none; }
+.ep-table-roll:hover { opacity: 1; }
+.ep-table-roll .svg-icon { width: 14px; height: 14px; }
+.ep-table-spacer.ep-table-spacer td { border: none; padding: 0; }
+
+
+/* -- write-conflict notice (D4) --------------------------------------------- */
+.ep-conflict-msg { margin-bottom: 8px; }
+.ep-conflict-actions { display: flex; gap: 8px; }
+.ep-conflict-actions button { cursor: pointer; }
+.ep-conflict-keys { margin: 4px 0 8px; font-size: var(--font-ui-smaller); opacity: 0.8; }
+
+/* -- sensitive value encryption (L1) ---------------------------------------- */
+.ep-locked { opacity: 0.75; font-style: italic; }
+.ep-lock-badge { opacity: 0.6; font-size: 0.85em; }
+
+/* -- inline charts (G2) ----------------------------------------------------- */
+.ep-inline-chart { display: inline-flex; align-items: center; vertical-align: middle; line-height: 1; }
+/* An inline piece given a shape of its own (see utils/inline-size): as many
+   lines tall as asked for, as wide as its share of the column comes to, and
+   on the side of the column it was put. Never wider than the column, and
+   never narrower than legible - unless the column itself is. */
+.ep-inline-sized { display: inline-block; vertical-align: middle; max-width: 100%; }
+/* Height and the legibility floor apply only to a piece actually given one:
+   a chip merely told which side to sit on keeps the line it was written on,
+   with no room taken above or below it. */
+.ep-inline-sized.ep-inline-tall { min-height: calc(var(--ep-inline-lines, 1) * var(--line-height-normal, 1.5) * 1em); }
+.ep-inline-sized.ep-inline-wide { min-width: min(150px, 100%); }
+/* Justification belongs to the wrapper: the piece keeps its own box, so
+   nothing around it is pushed by margins it does not have. The wrapper takes
+   the whole line but stays an inline box - a block here would split the line
+   it sits in and leave an empty line's worth of space above and below it. */
+.ep-inline-host { display: inline-block; width: 100%; }
+.ep-inline-host-left { text-align: left; }
+.ep-inline-host-center { text-align: center; }
+.ep-inline-host-right { text-align: right; }
+/* A sized chart fills the box rather than sitting at text height in it. */
+.ep-inline-chart.ep-inline-sized { display: inline-flex; justify-content: center; }
+.ep-inline-chart.ep-inline-wide .ep-chart-svg { width: 100%; }
+.ep-inline-chart.ep-inline-tall .ep-chart-svg { height: calc(var(--ep-inline-lines, 1) * var(--line-height-normal, 1.5) * 1em); }
+.ep-inline-roll.ep-inline-sized, .ep-inline-prop.ep-inline-sized { display: inline-flex; align-items: center; }
+/* The card any inline piece can be given - the box a vals: card always had. */
+.ep-inline-boxed { border: 1px solid var(--background-modifier-border); border-radius: var(--ep-radius, 6px); background: var(--background-secondary); padding: 2px 8px; }
+.ep-inline-chart.ep-inline-boxed { padding: 4px 8px; }
+/* ...and a piece told to go without the box it comes with: the card's border
+   and fill, or the pill a chip wears - leaving the value in the sentence with
+   nothing drawn around it. */
+.ep-inline-vals.ep-entry.ep-inline-unboxed { border: none; background: none; padding: 0; gap: 2px; }
+/* A chip without its pill is text: no border, no fill, no padding, and the
+   line height of the words around it rather than a pill's. */
+.ep-inline-roll.ep-inline-unboxed { border: none; background: none; padding: 0; line-height: inherit; }
+.ep-inline-num { width: 5em; }
+/* A heading inside a section (each inline kind names itself before its own
+   settings). Obsidian's own heading row gives it its type and padding; this
+   only tells it apart from the headings that start a section. */
+.ep-subheading .setting-item-name { font-size: var(--font-ui-medium); }
+/* A line holding nothing but an inline piece: no paragraph spacing, and no
+   leading either, so pieces on consecutive lines stack against each other. */
+.ep-inline-only { --p-spacing: 0; margin-block: 0; line-height: 1; }
+.markdown-rendered .ep-inline-only, .markdown-preview-view .ep-inline-only { margin-top: 0; margin-bottom: 0; }
+/* The row a note body sent us to, marked just long enough to find it. */
+@keyframes ep-settings-flash { from { background: var(--text-selection); } to { background: transparent; } }
+.ep-settings-flash { animation: ep-settings-flash 1.8s ease-out; border-radius: var(--ep-radius, 6px); }
+.ep-inline-chart .ep-chart-svg { height: 1.15em; width: auto; }
+.ep-chart-svg { display: block; overflow: visible; }
+.ep-chart-line { stroke: var(--ep-accent-default, var(--text-accent)); stroke-width: 1.5; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.ep-chart-bar { fill: var(--ep-accent-default, var(--text-accent)); }
+.ep-chart-grid { stroke: var(--background-modifier-border); stroke-width: 0.75; fill: none; }
+.ep-chart-area { fill: var(--ep-accent-default, var(--text-accent)); fill-opacity: 0.25; stroke: var(--ep-accent-default, var(--text-accent)); stroke-width: 1.25; stroke-linejoin: round; }
+.ep-chart-track { fill: var(--background-modifier-border); }
+.ep-chart-fill { fill: var(--ep-accent-default, var(--text-accent)); }
+/* Chart text: the property behind a value, and the value itself. */
+.ep-chart-axis { fill: var(--text-muted); font-family: var(--font-interface); }
+.ep-chart-num { fill: var(--text-normal); font-family: var(--font-interface); font-variant-numeric: tabular-nums; }
+.ep-chart-err { color: var(--text-error); font-size: var(--font-ui-smaller); }
+.ep-chart-block { margin: 0.6em 0; }
+.ep-chart-block .ep-chart-svg { width: min(260px, 92%); height: auto; }
+.ep-chart-title { font-weight: 600; margin-bottom: 4px; }
+
+
+/* -- [[ note autocomplete --------------------------------------------------- */
+.ep-sug-link { color: var(--text-accent); }
+
+/* -- skills type deprecation (F5) -------------------------------------------- */
+/* Scale lines on a slider or timeline: hairlines under the controls. Primary
+   and secondary are the same single-pixel line in the same colour, differing
+   only in how tall and how present they are. */
+.ep-slider2-ticks, .ep-dateplot-grid { position: absolute; inset: 0; pointer-events: none; }
+.ep-tick { position: absolute; top: 50%; width: 1px; height: 6px; transform: translateY(-50%); background: var(--text-faint); opacity: .18; }
+.ep-tick-major { height: 12px; opacity: .35; }
+/* A primary line answers to the pointer, on a target wider than it is drawn. */
+.ep-tick-hover { pointer-events: auto; }
+.ep-tick-hover::after { content: ""; position: absolute; inset: -3px -4px; }
+.ep-tick-hover:hover { opacity: 1; }
+.ep-hover-label { position: fixed; z-index: var(--layer-menu, 25); padding: 2px 6px; font-size: var(--font-ui-smaller); color: var(--text-normal); white-space: nowrap; pointer-events: none; }
+/* Hovering something this small reads as focusing it, ring and all. */
+.ep-tick.is-focused, .ep-dateplot-tick.is-focused { outline: 2px solid var(--interactive-accent); outline-offset: 1px; border-radius: 2px; }
+.ep-mini-list { margin: -6px 0 4px; }
+.ep-mini-list .ep-mini-row { padding: 3px 0; border: none; }
+.ep-mini-list .ep-mini-row .setting-item-info { display: none; }
+.ep-mini-list .ep-mini-row .setting-item-control { justify-content: flex-start; gap: 4px; }
+.ep-mini-list .ep-mini-row input[type='text'] { width: 100%; }
+.ep-moved-note { color: var(--text-muted); border-left: 2px solid var(--background-modifier-border); padding: 2px 0 2px 8px; margin: 0 0 8px; font-size: var(--font-ui-smaller); }
+.ep-skills-deprecated { color: var(--text-warning); border: 1px solid var(--text-warning); border-radius: 6px; padding: 6px 8px; margin: 4px 0 8px; font-size: var(--font-ui-smaller); }
+
+
+/* -- E1: keyboard focus visibility + screen-reader helpers ------------------ */
+.ep-sr-only.ep-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* HideService toggles this class on Obsidian's property rows (instead of an
+   injected <style>); the two-class selector out-specifies the default display. */
+.metadata-property.ep-prop-hidden { display: none; }
+.ep-sidebar :focus-visible, .ep-table-view :focus-visible, .ep-popup :focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; border-radius: 4px; }
+.ep-entry:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; border-radius: 6px; }
+
+/* -- M1: focus visibility for the newly keyboard-operable controls ---------- */
+.ep-rating:focus-visible, .ep-section-title:focus-visible, .ep-chip-x:focus-visible,
+.ep-editable:focus-visible, .ep-menu-btn:focus-visible, .ep-roll-box:focus-visible,
+.ep-step-btn:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; border-radius: 4px; }
+
+/* -- palette editor -------------------------------------------------------- */
+.ep-pal-preview { height: 14px; border-radius: 4px; border: 1px solid var(--background-modifier-border); margin: 2px 0 6px; }
+.ep-pal-num { width: 4.5em; }
+.ep-pal-date { width: 8.5em; }
+.ep-pal-word { width: 9em; }
+.ep-pal-dash { color: var(--text-muted); }
+.ep-pal-swatch { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--background-modifier-border); cursor: pointer; display: inline-block; }
+.ep-pal-dom { margin: 0 2px; }
+
+/* The scale: numbers down the left, the colours they wear down the right.
+   Two columns rather than one row of controls, because the colours have to be
+   able to slide past each other while the numbers hold still. */
+.ep-scale {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 12px;
+  align-items: center; margin: 4px 0 10px; box-sizing: border-box; max-width: 100%;
+}
+/* The third lane: what each step is made of. It drags like the colours, in a
+   lane of its own, so a material can be moved along the scale without taking
+   a colour with it. */
+.ep-scale-finish { display: flex; align-items: center; gap: 4px; justify-content: flex-end; transition: transform 120ms ease; }
+.ep-scale-finish.is-dragging { transition: none; cursor: grabbing; z-index: 1; position: relative; }
+.ep-scale-finish-pick { max-width: 8em; }
+
+/* The word table's steps: folded away until asked for, and then plain. */
+.ep-table-help { margin: 0 0 10px; }
+.ep-table-steps { margin: 4px 0; padding-left: 1.4em; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.ep-table-steps li { margin: 3px 0; }
+.ep-scale-vals { display: flex; align-items: center; gap: 4px; min-height: 28px; flex-wrap: wrap; min-width: 0; }
+.ep-scale-color { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
+.ep-scale-kind { color: var(--text-muted); font-size: var(--font-smaller); width: 3.2em; }
+.ep-scale-borrowed { cursor: default; opacity: .85; }
+.ep-scale-grip { cursor: grab; color: var(--text-faint); letter-spacing: -1px; padding: 0 2px; border-radius: 4px; }
+.ep-scale-grip:hover, .ep-scale-grip:focus-visible { color: var(--text-normal); background: var(--background-modifier-hover); }
+/* Only the cell under the pointer is lifted; the ones it passes slide by
+   transform, which is why they are transitioned and it is not. */
+.ep-scale-color { transition: transform 120ms ease; }
+.ep-scale-color.is-dragging { transition: none; cursor: grabbing; z-index: 1; position: relative; }
+.ep-scale-color.is-dragging .ep-pal-swatch { box-shadow: 0 2px 8px var(--background-modifier-box-shadow); }
+/* The two ways in: a stop or a band, at this exact place in the scale. */
+.ep-scale-ins { grid-column: 1 / -1; display: flex; gap: 6px; opacity: .35; }
+.ep-scale-ins:hover, .ep-scale-ins:focus-within { opacity: 1; }
+.ep-scale-add {
+  font-size: var(--font-smaller); padding: 0 6px; height: 20px; line-height: 18px;
+  background: transparent; border: 1px dashed var(--background-modifier-border); color: var(--text-muted);
+  border-radius: 4px; cursor: pointer; box-shadow: none;
+}
+.ep-scale-add:hover { color: var(--text-normal); border-style: solid; background: var(--background-modifier-hover); }
+.ep-fin-when, .ep-fin-pick { max-width: 9em; }
+/* SET sits beside ROLL and reads as its quieter sibling: the same shape, no
+   accent - one asks a question of the value, the other decides it. */
+/* Sized from the same rule as .ep-roll-btn (see the shared height/padding
+   group above): the two stand side by side in a row and any difference in
+   height or padding reads as a mistake. Only the fill differs - SET is the
+   quieter of the pair, because it overwrites a value. */
+/* The box is written out rather than left to the shared group above, because
+   this rule is later in the file and anything it sets - a border the roll
+   button does not have, a padding - would otherwise be measured against a
+   height set 700 lines earlier. Same numbers, one place they can be read. */
+.ep-set-btn {
+  box-sizing: border-box;
+  height: calc(var(--ep-size-value, var(--font-ui-small)) + 10px); min-height: 22px;
+  padding: 2px 8px; font-size: var(--font-ui-smaller); line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; align-self: center;
+  cursor: pointer;
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border); border-radius: var(--ep-radius, 6px);
+  box-shadow: none;
+}
+.ep-set-btn:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+/* ...and the roll button is pinned the same way, so a flex cell that stretches
+   its contents cannot pull one of the pair taller than the other. */
+.ep-roll-btn { align-self: center; }
+.ep-set-cell { justify-content: flex-end; align-items: center; }
+.ep-roll-cell { align-items: center; }
+/* A place to type a roll, outside the roller: the field, the roller's own
+   function bar, and a line of what the notation means. */
+.ep-exprfield { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
+.ep-expr-input { width: 100%; font-variant-numeric: tabular-nums; }
+.ep-expr-hint { color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.35; }
+/* "Set a property..." on a roll card's title line - the right-click menu has
+   the same action, and a right-click is not a thing anybody finds. */
+.ep-roll-label { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.ep-roll-assign {
+  pointer-events: auto; cursor: pointer; font-size: var(--font-ui-smaller); line-height: 1;
+  padding: 2px 8px; border-radius: 999px; box-shadow: none; font-weight: 400;
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+.ep-roll-assign:hover { color: var(--text-on-accent); background: var(--interactive-accent); border-color: var(--interactive-accent); }
+
+/* Dealing a handful of rolls across a sheet's properties. The pairing is the
+   whole point of the dialog, so it is drawn as a list rather than described. */
+/* Cards asked about rather than merely shown: docked to the top of the screen
+   and dropped below dialog height, so the dialog deciding their fate is not
+   opened into the middle of them and out of reach. */
+.ep-roll-layer.ep-roll-aside {
+  /* Still on top - the cards have to stay right-clickable, which is how a roll
+     is handed to a property while the deal is open. What changes is that the
+     layer stops dimming and stops swallowing presses, so the dialog beneath it
+     is reachable; the cards keep their own `pointer-events: auto`. */
+  pointer-events: none; background: transparent;
+}
+/* The hand-off between the two screens is a move, not a cut: the cards slide
+   up and shrink out of the dialog's way, and slide back when it closes. The
+   layer's own flex centring is left alone so there is something to move FROM. */
+.ep-roll-cards { transition: transform .3s cubic-bezier(.2, .8, .3, 1), opacity .3s ease; }
+.ep-roll-layer.ep-roll-aside .ep-roll-cards { transform: translateY(-30vh) scale(.78); opacity: .92; }
+@media (prefers-reduced-motion: reduce) { .ep-roll-cards { transition: none; } }
+.ep-roll-layer.ep-roll-aside .ep-roll-summary { display: none; }
+/* The button that opens the deal has nothing to say while the deal is open -
+   the card's own menu offers to hand this roll over instead. */
+.ep-roll-layer.ep-roll-aside .ep-roll-assign { display: none; }
+/* A sheet's worth of properties plus the preview is taller than a modal:
+   scroll the body rather than letting the buttons fall off the bottom. */
+.ep-assign { max-height: min(72vh, 720px); overflow-y: auto; }
+
+.ep-assign-empty { color: var(--text-muted); font-size: var(--font-ui-smaller); margin: 8px 0; }
+/* ONE list. A ticked property rises to the top and grows its dropdown in
+   place, rather than appearing a second time in a section of its own - a
+   thing shown twice is a thing the reader has to work out is the same thing. */
+.ep-assign-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 2px; }
+.ep-assign-pick {
+  display: flex; align-items: center; gap: 8px; padding: 3px 6px;
+  border: 1px solid transparent; border-radius: var(--ep-radius, 6px);
+}
+.ep-assign-pick:hover { background: var(--background-modifier-hover); }
+.ep-assign-pick.is-on { background: var(--background-secondary); }
+.ep-assign-tick { margin: 0; flex: none; cursor: pointer; }
+/* The name takes the slack, so everything after it lines up in columns. */
+.ep-assign-pickname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* What it holds now: its own right-aligned column, so it reads against the
+   dropdowns instead of trailing off wherever the name happens to end. */
+.ep-assign-picknow {
+  flex: none; width: 5.5em; text-align: right; color: var(--text-faint);
+  font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Held open whether or not this property is being assigned to: an empty slot
+   keeps the "now" column straight, where collapsing it would push the rows
+   that have no dropdown out to the far right. */
+.ep-assign-slot { flex: none; width: 11.5em; }
+.ep-assign-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px; height: 26px;
+  padding: 0 8px; text-align: left; cursor: pointer;
+}
+/* The number being assigned on the left, because it is what is decided... */
+.ep-assign-btnval { flex: none; font-variant-numeric: tabular-nums; font-weight: 700; }
+/* ...and the card it came off right-aligned beside it, because that is only a
+   reference - until two properties are reading the same one, when the pair
+   goes yellow. Marked rather than prevented: sharing a roll is a thing
+   somebody may well mean to do. */
+.ep-assign-btnfrom {
+  flex: 1; min-width: 0; text-align: right; color: var(--text-faint);
+  font-size: var(--font-ui-smaller); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ep-assign-chev { flex: none; color: var(--text-faint); font-size: 10px; }
+.ep-assign-pick.ep-assign-clash { border-color: var(--color-yellow, #e0ac00); }
+.ep-assign-pick.ep-assign-clash .ep-assign-btnfrom { color: var(--color-yellow, #e0ac00); }
+/* A property the reader has explicitly told to keep what it has. */
+.ep-assign-pick.ep-assign-spare .ep-assign-btnval { font-weight: 400; font-style: italic; color: var(--text-muted); }
+
+/* The roll list. Two columns, the same two the button shows, so choosing is
+   reading what you were already looking at. */
+/* Above the roll layer too: this is the thing the reader is currently using. */
+.ep-assign-pop { z-index: 10003; padding: 4px; min-width: 12em; max-width: 22em; }
+.ep-assign-group {
+  padding: 4px 8px 2px; color: var(--text-muted); font-size: var(--font-ui-smaller);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.ep-assign-opt { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-radius: 5px; cursor: pointer; }
+.ep-assign-opt:hover { background: var(--background-modifier-hover); }
+.ep-assign-opt.is-on { background: var(--background-modifier-active-hover, var(--background-modifier-hover)); }
+.ep-assign-optval { flex: none; font-variant-numeric: tabular-nums; font-weight: 700; }
+.ep-assign-optfrom {
+  flex: 1; min-width: 0; text-align: right; color: var(--text-faint);
+  font-size: var(--font-ui-smaller); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Ticking a property moves it to the top of the list; the row slides there
+   rather than teleporting, so the reader can see what became of the one they
+   touched. `ep-assign-jump` is the FLIP hold - the frame where the row is put
+   back where it was, before being let go. */
+.ep-assign-pick { transition: background-color .15s ease, border-color .15s ease, transform .26s cubic-bezier(.2, .8, .3, 1); }
+.ep-assign-pick.ep-assign-jump { transition: none; }
+@media (prefers-reduced-motion: reduce) { .ep-assign-pick { transition: none; } }
+
+.ep-fin-strength { width: 6.5em; flex: 0 0 auto; }
+.ep-fin-strength-read { color: var(--text-muted); font-size: var(--font-ui-smaller); width: 3em; text-align: right; }
+.ep-fin-vals, .ep-fin-set { width: 9em; }
+
+/* -- conditional formatting ------------------------------------------------ */
+/* A palette hands its answer over as variables; everything below only reads
+   them, so themes, Style Settings and forced-colors can all have their say. */
+.ep-fmt-text { color: var(--ep-fmt-fg, inherit); }
+/* The field that stands in for a value while it is being typed wears the
+   colour the value would: the row does not blink back to plain the moment
+   somebody starts editing it. */
+input.ep-edit-input.ep-fmt-text { color: var(--ep-fmt-fg, inherit); }
+input.ep-edit-input.ep-fmt-chip, input.ep-edit-input.ep-fmt-card {
+  background: var(--ep-fmt-bg, transparent); color: var(--ep-fmt-fg, inherit);
+}
+.ep-fmt-chip { background: var(--ep-fmt-bg, transparent); color: var(--ep-fmt-fg, inherit); border-radius: var(--ep-chip-radius, var(--ep-radius, 6px)); padding: 0 6px; }
+.ep-fmt-card { background: var(--ep-fmt-bg, transparent); color: var(--ep-fmt-fg, inherit); }
+/* The foreground picked for the fill belongs to everything written on it -
+   the unit suffix, the data-type tag, the modifier chain, a chip's remove
+   cross - not only to the value itself, which is what left muted greys
+   floating on a strong colour. */
+.ep-fmt-chip, .ep-fmt-chip *,
+.ep-fmt-card .ep-line-name, .ep-fmt-card .ep-num, .ep-fmt-card .ep-val-right,
+.ep-fmt-card .ep-unit-hint, .ep-fmt-card .ep-type-hint, .ep-fmt-card .ep-den-cell,
+.ep-fmt-card .ep-chip, .ep-fmt-card .ep-chip-x, .ep-fmt-card .ep-placeholder,
+.ep-fmt-text .ep-unit-hint, .ep-fmt-text .ep-type-hint { color: var(--ep-fmt-fg, inherit); }
+.ep-fmt-chip .ep-unit-hint, .ep-fmt-chip .ep-type-hint, .ep-fmt-card .ep-unit-hint,
+.ep-fmt-card .ep-type-hint { opacity: .8; }
+/* A value that fails its constraints says so first: the fill stays, the error
+   mark goes over the top of it. */
+.ep-fmt.ep-invalid, .ep-fmt .ep-invalid { box-shadow: 0 0 0 1px var(--text-error); }
+.ep-fmt-text.ep-invalid { color: var(--text-error); }
+/* A colour that means something must not change because the pointer happens
+   to be over it: the row's own hover tint would sit on top of the fill and
+   read as a different value. What the palette said stands, hovered or not,
+   and nothing fades between the two. */
+.ep-fmt-card:hover, .ep-entry:hover .ep-fmt-card,
+.ep-fmt-chip:hover, .ep-entry:hover .ep-fmt-chip {
+  background: var(--ep-fmt-bg, transparent);
+  color: var(--ep-fmt-fg, inherit);
+}
+.ep-fmt-text:hover, .ep-entry:hover .ep-fmt-text { color: var(--ep-fmt-fg, inherit); }
+/* The colour is worked out again on every change to the value - a slider
+   mid-drag, a stepper, a field being typed into - and it travels there rather
+   than jumping, so a value climbing a scale reads as a colour climbing with
+   it. The custom properties are not animatable themselves, but what they feed
+   is: the fill and the text move, the finish over the top does not. */
+.ep-fmt-text, .ep-fmt-chip, .ep-fmt-card,
+.ep-fmt-chip *, .ep-fmt-card .ep-line-name, .ep-fmt-card .ep-num, .ep-fmt-card .ep-val-right {
+  transition: background-color 160ms ease-out, color 160ms ease-out;
+}
+.ep-fmt::after { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ep-fmt-text, .ep-fmt-chip, .ep-fmt-card, .ep-fmt-chip *,
+  .ep-fmt-card .ep-line-name, .ep-fmt-card .ep-num, .ep-fmt-card .ep-val-right { transition: none; }
+}
+
+/* -- finishes -------------------------------------------------------------- */
+/*
+  A finish is what the value's colour is MADE of, and the light on it moves.
+  A foil that never catches the light is a picture of a foil; the whole reason
+  the material reads as material is that the highlight travels as you do.
+
+  One pointer, but every value lit relative to ITSELF. What matters to a row
+  is not where the pointer is in the window - it is where the pointer is on
+  the row: the highlight belongs under the cursor, and a sheet of ten rows
+  should catch the light one row at a time as you cross them. A single watcher
+  (see `ui/render/lamp.ts`) works that out per value in one pass a frame and
+  writes it as the properties below; a value the light has not reached is left
+  to the resting values here, which cost nothing at all.
+
+  Two layers per value, both blended INTO the palette's colour rather than
+  painted over it:
+    ::before  the SHEET - the material: spectrum, weave, star field, facets.
+    ::after   the GLARE - the light on it, brightest where the pointer is.
+
+  Everything is gradients. Nothing is downloaded, nothing is an image, and
+  nothing animates on a timer - the only thing that moves is the light, and it
+  moves because the reader moved it.
+
+  SEAMLESS, all of them - which takes three rules, because a tile can show its
+  edge in three different ways:
+
+    1. A DIAGONAL sweep cannot be tiled at all. Its bands run at an angle and
+       the tile is a rectangle, so the colour arriving at the right-hand edge
+       is not the colour leaving the left-hand one, whatever its end stops
+       say. Those layers are therefore `no-repeat`, sized well past the value,
+       and their position is held inside 0-100% so the image always covers
+       what it is drawn on. That is what `--ep-travel` is bounded for.
+    2. A REPEATING gradient restarts its pattern at the edge of its own image,
+       so a repeated image must hold a WHOLE NUMBER OF PERIODS: bands written
+       as `calc(100% / 7)` and read seven times, or a pixel period with a tile
+       sized to a multiple of it (8px thread, 96px tile).
+    3. A repeating CONIC gradient's period must DIVIDE 360 exactly - 12deg,
+       20, 24, never 11 or 21, which leave a wedge over at the top.
+
+  A gradient that never moves is exempt from all three: sized to cover and
+  anchored at the centre, there is no second tile to disagree with it.
+*/
+
+/* -- the lamp, and the spectrum it splits into ----------------------------- */
+:root {
+  /* Resting values: the lamp overhead and a little to the left, which is
+     where a reader with no pointer would expect a highlight to be. These are
+     also what `lamp.ts` eases a value back to before handing it over, so the
+     two must agree exactly - the handover is meant to be invisible. */
+  --ep-lamp-x: 42%;
+  --ep-lamp-y: 28%;
+  --ep-lamp-dx: -8%;
+  --ep-lamp-dy: -22%;
+  --ep-lamp-reach: 0.468;
+  --ep-lamp-turn: 70.0deg;
+  /* How much of the light this value is getting: 1 with the pointer on it,
+     falling away to 0 as the pointer leaves. At rest - no pointer, no
+     JavaScript - every value gets the same modest share. */
+  --ep-lamp-near: 0.35;
+
+  /* Six hues a white light splits into here. Deliberately not a rainbow of
+     primaries: these are the colours a thin film actually throws - warm at
+     the top, cold at the bottom, nothing fully saturated. */
+  --ep-hue-1: hsl(348 92% 74%);
+  --ep-hue-2: hsl(38 96% 72%);
+  --ep-hue-3: hsl(78 78% 68%);
+  --ep-hue-4: hsl(168 82% 70%);
+  --ep-hue-5: hsl(212 94% 74%);
+  --ep-hue-6: hsl(288 84% 74%);
+
+  /*
+     How far the sheet travels for a given move of the lamp.
+     Bounded on purpose: the lamp's offset reaches 100% of a value at most, so
+     anything above 0.5 pushes a non-repeating layer's position outside 0-100%
+     and the image stops covering what it is drawn on. Half of that offset is
+     plenty of travel, because a position of 0-100% walks the image across by
+     its whole overhang - for an image at 260%, that is one and a half values.
+  */
+  --ep-travel: 0.5;
+  /* The whole effect's strength, for a global "calm it down" switch. */
+  --ep-finish-strength: 1;
+}
+
+/* -- the two layers -------------------------------------------------------- */
+/*
+  `isolation: isolate` keeps the blending inside the value: without it a
+  color-dodge layer reaches through to the note behind and lights that up too.
+*/
+.ep-fin {
+  position: relative;
+  isolation: isolate;
+}
+
+.ep-fin::before,
+.ep-fin::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  border-radius: inherit;
+  /* UNDER the text. A finish is what the value is printed on, not something
+     laid over the reading of it: the fill paints, then the material, then the
+     words. Negative inside the value's own stacking context does exactly
+     that, and still blends with the fill beneath it. */
+  z-index: -1;
+  /*
+    Exactly this value's border box, and no clipping anywhere.
+
+    It used to be grown to the row and clipped back with `clip-path`, which
+    Obsidian's plugin review flags as only partly supported - and which was
+    doing two jobs at once. Both are done without it now: the layer covers the
+    border because `--ep-edge` (the value's own border width, measured by the
+    renderer) is exactly how far outside the padding box that border sits, and
+    it is rounded by the radius it inherits rather than by a clip.
+
+    Continuity across a row of chips - one sheet with chips cut out of it,
+    rather than five little sheets - is done by moving the PATTERN instead of
+    the box: `--ep-span-*` shifts each piece's background by its offset within
+    the row, so the tiling lines up across the gaps (see `--ep-drift-in`).
+  */
+  inset: calc(-1 * var(--ep-edge, 0px));
+  /* Its own layer, so moving the light does not relayout the row. */
+  will-change: background-position, filter;
+  /* A value crossing into another band changes what it is made of. Fading
+     between the two is the difference between a material and a light switch;
+     it also smooths the light, which is welcome. */
+  transition: opacity 180ms ease;
+}
+
+/*
+  The words come last, whatever is under them.
+
+  The layers are negative inside the value's own stacking context, which
+  already puts them under its content - but a chip whose text is wrapped in a
+  span of its own, or a theme that gives that span a stacking context, can
+  land the other way round. Saying it twice costs nothing and settles it.
+*/
+.ep-fin > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* The sheet: the material. */
+.ep-fin::before {
+  background-image: var(--ep-sheet-img, none);
+  background-size: var(--ep-sheet-size, 300% 300%);
+  background-position: var(--ep-sheet-pos, center);
+  /* Nothing repeats unless it says so: a layer that repeats has been built to
+     (see rule 2 above), and everything else is a single image big enough to
+     cover the value wherever the light has pushed it. */
+  background-repeat: var(--ep-sheet-repeat, no-repeat);
+  background-blend-mode: var(--ep-sheet-mix, normal);
+  mix-blend-mode: var(--ep-sheet-blend, hard-light);
+  filter: var(--ep-sheet-filter, none);
+  /* The nearer the light, the more of the material you see: a row under the
+     pointer is vivid, its neighbours are quiet, and the far end of a long
+     sheet is almost plain - which is how a sheet of foil actually reads. */
+  opacity: calc(
+    var(--ep-sheet-opacity, 0.55) * var(--ep-finish-strength) * var(--ep-fin-mount, 1) *
+      (0.55 + var(--ep-lamp-near) * 0.45)
+  );
+}
+
+/* The glare: the light on it. */
+.ep-fin::after {
+  background-image: var(
+    --ep-glare-img,
+    radial-gradient(
+      circle at var(--ep-lamp-x) var(--ep-lamp-y),
+      hsl(0 0% 100% / 0.55) 0%,
+      hsl(0 0% 100% / 0.12) 32%,
+      hsl(0 0% 0% / 0.28) 88%
+    )
+  );
+  background-size: var(--ep-glare-size, cover);
+  background-position: var(--ep-glare-pos, center);
+  background-repeat: var(--ep-glare-repeat, no-repeat);
+  mix-blend-mode: var(--ep-glare-blend, overlay);
+  filter: var(--ep-glare-filter, none);
+  /* The glare is the light itself, so it fades further than the sheet does. */
+  opacity: calc(
+    var(--ep-glare-opacity, 0.5) * var(--ep-finish-strength) * var(--ep-fin-mount, 1) *
+      (0.3 + var(--ep-lamp-near) * 0.7)
+  );
+}
+
+/*
+  The two positions almost every finish wants, written once.
+
+  DRIFT moves the sheet the OTHER way to the lamp, which is what makes a flat
+  gradient read as depth: the material appears to sit under glass. SWEEP moves
+  with it, for the layers that are meant to be the light rather than the thing
+  being lit.
+*/
+.ep-fin {
+  /* `--ep-nudge` moves a piece cut out of a sheet along it a little, so a chip
+     lying on a row of the same material is still visibly a separate piece
+     rather than a window onto what is behind it. Zero for anything that is
+     the whole sheet. Held per axis so the versions below can be built from
+     them without writing the arithmetic out four more times. */
+  --ep-drift-x: clamp(0%, calc(50% - (var(--ep-lamp-dx) * var(--ep-travel)) + var(--ep-nudge, 0px)), 100%);
+  --ep-drift-y: clamp(0%, calc(50% - (var(--ep-lamp-dy) * var(--ep-travel)) + var(--ep-nudge, 0px)), 100%);
+  --ep-sweep-x: clamp(0%, calc(50% + (var(--ep-lamp-dx) * var(--ep-travel)) + var(--ep-nudge, 0px)), 100%);
+  --ep-sweep-y: clamp(0%, calc(50% + (var(--ep-lamp-dy) * var(--ep-travel)) + var(--ep-nudge, 0px)), 100%);
+  --ep-drift: var(--ep-drift-x) var(--ep-drift-y);
+  --ep-sweep: var(--ep-sweep-x) var(--ep-sweep-y);
+
+  /*
+    The same two, shifted into the ROW's frame.
+
+    A piece cut out of a sheet - a chip, a value cell - sits some way into the
+    row, and a pattern drawn from its own corner restarts there. Pulling the
+    background back by that offset draws it as though it began at the row's
+    corner instead, so the weave, the threads and the star field run straight
+    across the gaps between chips and the row reads as one sheet.
+
+    Only TILED layers may use these: the shift walks the image off the piece,
+    which a repeating pattern covers again and a single image does not. It is
+    also why these are not clamped - a tile has no edge to fall off.
+  */
+  --ep-span-pos: calc(50% - var(--ep-span-l, 0px)) calc(50% - var(--ep-span-t, 0px));
+  --ep-drift-in:
+    calc(var(--ep-drift-x) - var(--ep-span-l, 0px))
+    calc(var(--ep-drift-y) - var(--ep-span-t, 0px));
+  --ep-sweep-in:
+    calc(var(--ep-sweep-x) - var(--ep-span-l, 0px))
+    calc(var(--ep-sweep-y) - var(--ep-span-t, 0px));
+
+  /* Brighter as the pointer goes wide, so the light has somewhere to come
+     from rather than sitting at one strength forever. */
+  --ep-lift: calc(0.55 + (var(--ep-lamp-reach) * 0.55));
+}
+
+/* ==========================================================================
+   THE FINISHES
+   Fourteen. Each is a handful of declarations; the shapes above do the rest.
+   ========================================================================== */
+
+
+/* SHEEN - one clean highlight travelling across a smooth surface. */
+.ep-fin-sheen {
+  --ep-sheet-img: linear-gradient(
+    104deg,
+    transparent 0 34%,
+    hsl(0 0% 100% / 0.72) 47%,
+    hsl(0 0% 100% / 0.95) 50%,
+    hsl(0 0% 100% / 0.1) 55%,
+    transparent 66%
+  );
+  --ep-sheet-size: 260% 260%;
+  --ep-sheet-pos: var(--ep-sweep);
+  --ep-sheet-blend: screen;
+  --ep-sheet-opacity: 0.62;
+  --ep-glare-opacity: 0.35;
+}
+
+/* MIRROR - polished metal: bright bands and black ones, and it swings. */
+.ep-fin-mirror {
+  --ep-sheet-img: linear-gradient(
+    var(--ep-lamp-turn),
+    hsl(0 0% 100% / 0.9) 0 8%,
+    hsl(0 0% 0% / 0.75) 26%,
+    hsl(0 0% 100% / 0.92) 47%,
+    hsl(0 0% 0% / 0.7) 68%,
+    hsl(0 0% 100% / 0.88) 100%
+  );
+  --ep-sheet-size: 220% 220%;
+  --ep-sheet-pos: var(--ep-sweep);
+  --ep-sheet-blend: hard-light;
+  --ep-sheet-filter: brightness(var(--ep-lift)) contrast(1.6);
+  --ep-sheet-opacity: 0.6;
+}
+
+
+
+/* PRISM - the spectrum crossed with itself, sharper and more restless. */
+.ep-fin-prism {
+  --ep-band: calc(100% / 6);
+  /* Cut into panes: the spectrum sweeps across the whole value, and a grid of
+     facets tiles over it - axis-aligned, so the tiles meet exactly however
+     the light has pushed them, and a whole number of periods to a tile. */
+  --ep-sheet-img: repeating-linear-gradient(
+      var(--ep-lamp-turn),
+      var(--ep-hue-1) calc(var(--ep-band) * 1),
+      var(--ep-hue-3) calc(var(--ep-band) * 2),
+      var(--ep-hue-5) calc(var(--ep-band) * 3),
+      var(--ep-hue-2) calc(var(--ep-band) * 4),
+      var(--ep-hue-6) calc(var(--ep-band) * 5),
+      var(--ep-hue-1) calc(var(--ep-band) * 6)
+    ),
+    repeating-linear-gradient(
+      90deg,
+      hsl(0 0% 100% / 0.42) 0 1px,
+      hsl(0 0% 0% / 0.3) 1px 2px,
+      transparent 2px 24px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      hsl(0 0% 100% / 0.42) 0 1px,
+      hsl(0 0% 0% / 0.3) 1px 2px,
+      transparent 2px 24px
+    );
+  --ep-sheet-size: 300% 300%, 96px 96px, 96px 96px;
+  --ep-sheet-pos: var(--ep-drift), var(--ep-sweep-in), var(--ep-sweep-in);
+  --ep-sheet-repeat: no-repeat, repeat, repeat;
+  --ep-sheet-mix: hard-light, hard-light;
+  --ep-sheet-blend: color-dodge;
+  --ep-sheet-filter: brightness(calc(var(--ep-lift) * 0.8)) contrast(1.9) saturate(1.2);
+  --ep-sheet-opacity: 0.45;
+}
+
+/* OPAL - the same light, but soft: a thin film rather than a foil. */
+.ep-fin-opal {
+  --ep-sheet-img: repeating-linear-gradient(
+      126deg,
+      hsl(0 0% 100% / 0.06) 0%,
+      var(--ep-hue-1) 14%,
+      var(--ep-hue-4) 30%,
+      var(--ep-hue-2) 46%,
+      var(--ep-hue-5) 62%,
+      var(--ep-hue-6) 80%,
+      hsl(0 0% 100% / 0.06) 100%
+    ),
+    linear-gradient(68deg, transparent 34%, hsl(0 0% 100% / 0.42) 50%, transparent 66%);
+  --ep-sheet-size: 260% 260%, 200% 200%;
+  --ep-sheet-pos: var(--ep-drift), var(--ep-sweep);
+  --ep-sheet-blend: soft-light;
+  --ep-sheet-filter: saturate(1.15);
+  --ep-sheet-opacity: 0.72;
+  --ep-glare-opacity: 0.4;
+}
+
+/* NEBULA - a deep field with a spectrum turning slowly behind it. */
+.ep-fin-nebula {
+  --ep-sheet-img: radial-gradient(circle at 18% 26%, hsl(0 0% 100% / 0.95) 0 1px, transparent 2px),
+    radial-gradient(circle at 57% 73%, hsl(0 0% 100% / 0.85) 0 1px, transparent 2px),
+    radial-gradient(circle at 84% 31%, hsl(0 0% 100% / 0.9) 0 1px, transparent 2px),
+    radial-gradient(circle at 36% 88%, hsl(0 0% 100% / 0.7) 0 1px, transparent 2px),
+    repeating-linear-gradient(
+      var(--ep-lamp-turn),
+      var(--ep-hue-6) 0%,
+      var(--ep-hue-5) 22%,
+      var(--ep-hue-4) 44%,
+      var(--ep-hue-1) 68%,
+      var(--ep-hue-6) 100%
+    ),
+    radial-gradient(ellipse at 32% 62%, hsl(266 60% 30% / 0.75), hsl(240 40% 6% / 0.85) 72%);
+  --ep-sheet-size: 34px 34px, 51px 51px, 43px 43px, 61px 61px, 260% 260%, cover;
+  --ep-sheet-pos:
+    var(--ep-sweep-in), var(--ep-sweep-in), var(--ep-sweep-in), var(--ep-sweep-in),
+    var(--ep-drift), center;
+  --ep-sheet-repeat: repeat, repeat, repeat, repeat, no-repeat, no-repeat;
+  --ep-sheet-mix: screen;
+  --ep-sheet-blend: color-dodge;
+  --ep-sheet-filter: brightness(calc(var(--ep-lift) * 0.85)) contrast(1.6);
+  --ep-sheet-opacity: 0.6;
+}
+
+/* BEACON - light thrown out from wherever the pointer is. */
+.ep-fin-beacon {
+  --ep-sheet-img: repeating-conic-gradient(
+      from var(--ep-lamp-turn) at var(--ep-lamp-x) var(--ep-lamp-y),
+      hsl(0 0% 100% / 0.3) 0deg 2deg,
+      transparent 2deg 12deg
+    ),
+    radial-gradient(circle at var(--ep-lamp-x) var(--ep-lamp-y), hsl(0 0% 100% / 0.5), transparent 58%);
+  --ep-sheet-size: cover, cover;
+  --ep-sheet-pos: center, center;
+  --ep-sheet-mix: screen;
+  --ep-sheet-blend: color-dodge;
+  --ep-sheet-filter: brightness(calc(var(--ep-lift) * 0.75)) contrast(1.5);
+  --ep-sheet-opacity: 0.5;
+  --ep-glare-img: none;
+}
+
+/* GLITTER - a field of specks, each catching the light as it passes. */
+.ep-fin-glitter {
+  /* Specks of several kinds, on tiles of different sizes so they never fall
+     into rows: round grains, four-pointed glints (a horizontal and a vertical
+     needle crossing), a square fleck turned on its corner, and a wide soft
+     halo under the lot. Every shape sits well inside its own tile, so the
+     tiles meet with nothing to see. */
+  --ep-sheet-img:
+    radial-gradient(circle at 20% 20%, hsl(0 0% 100% / 0.95) 0 1px, transparent 2px),
+    radial-gradient(circle at 68% 44%, var(--ep-hue-2) 0 1.5px, transparent 3px),
+    radial-gradient(circle at 38% 76%, var(--ep-hue-4) 0 1px, transparent 2px),
+    radial-gradient(ellipse 6px 1px at 50% 50%, hsl(0 0% 100% / 0.85) 0 40%, transparent 100%),
+    radial-gradient(ellipse 1px 6px at 50% 50%, hsl(0 0% 100% / 0.85) 0 40%, transparent 100%),
+    conic-gradient(
+      from 45deg at 50% 50%,
+      var(--ep-hue-5) 0deg 12deg,
+      transparent 12deg 78deg,
+      var(--ep-hue-6) 78deg 102deg,
+      transparent 102deg 168deg,
+      var(--ep-hue-1) 168deg 192deg,
+      transparent 192deg 258deg,
+      var(--ep-hue-3) 258deg 282deg,
+      transparent 282deg 348deg,
+      var(--ep-hue-5) 348deg 360deg
+    ),
+    radial-gradient(circle at var(--ep-lamp-x) var(--ep-lamp-y), hsl(0 0% 100% / 0.65), transparent 62%);
+  --ep-sheet-size: 13px 13px, 29px 29px, 19px 19px, 37px 37px, 41px 41px, 53px 53px, cover;
+  --ep-sheet-pos:
+    var(--ep-sweep-in), var(--ep-drift-in), var(--ep-sweep-in), var(--ep-drift-in),
+    var(--ep-sweep-in), var(--ep-drift-in), center;
+  --ep-sheet-repeat: repeat, repeat, repeat, repeat, repeat, repeat, no-repeat;
+  --ep-sheet-mix: screen;
+  --ep-sheet-blend: color-dodge;
+  --ep-sheet-filter: brightness(calc(var(--ep-lift) * 0.9)) contrast(1.8);
+  --ep-sheet-opacity: 0.55;
+  --ep-glare-opacity: 0.3;
+}
+
+/* CRACKLE - a broken surface. Both centres are off the value altogether, one
+   a whole height above it and one below, so what crosses it are the long
+   straight facets far out from the middle rather than a pinwheel sitting in
+   the middle of a row. */
+.ep-fin-crackle {
+  --ep-sheet-img: repeating-conic-gradient(
+      from calc(var(--ep-lamp-turn) * 0.5) at 32% -100%,
+      hsl(0 0% 100% / 0.7) 0deg 5deg,
+      hsl(0 0% 0% / 0.5) 5deg 8deg,
+      transparent 8deg 24deg
+    ),
+    repeating-conic-gradient(
+      from calc(var(--ep-lamp-turn) * -0.5) at 71% 200%,
+      hsl(190 90% 92% / 0.6) 0deg 4deg,
+      hsl(0 0% 0% / 0.42) 4deg 7deg,
+      transparent 7deg 20deg
+    );
+  --ep-sheet-size: cover, cover;
+  --ep-sheet-pos: center, center;
+  --ep-sheet-mix: hard-light;
+  --ep-sheet-blend: hard-light;
+  --ep-sheet-filter: brightness(var(--ep-lift)) contrast(1.4);
+  --ep-sheet-opacity: 0.5;
+}
+
+/* SATIN - woven thread: the sheen runs along the weave, not across it. */
+.ep-fin-satin {
+  --ep-sheet-img: repeating-linear-gradient(
+      104deg,
+      hsl(0 0% 100% / 0.14) 0 1px,
+      hsl(0 0% 100% / 0.04) 1px 3px,
+      transparent 3px 8px
+    ),
+    linear-gradient(104deg, hsl(0 0% 30% / 0.28), hsl(0 0% 100% / 0.4) 48%, hsl(0 0% 28% / 0.28));
+  --ep-sheet-size: 96px 96px, 220% 220%;
+  --ep-sheet-pos: var(--ep-span-pos), var(--ep-sweep);
+  --ep-sheet-repeat: repeat, no-repeat;
+  --ep-sheet-blend: soft-light;
+  --ep-sheet-opacity: 0.78;
+  --ep-glare-opacity: 0.28;
+}
+
+/* WEAVE - a coarse cloth, lit across the grain. */
+.ep-fin-weave {
+  --ep-sheet-img: repeating-linear-gradient(0deg, hsl(0 0% 100% / 0.1) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, hsl(0 0% 0% / 0.09) 0 1px, transparent 1px 4px),
+    linear-gradient(140deg, hsl(0 0% 100% / 0.2), hsl(0 0% 30% / 0.2) 50%, hsl(0 0% 100% / 0.2));
+  --ep-sheet-size: 48px 48px, 48px 48px, 200% 200%;
+  --ep-sheet-pos: var(--ep-span-pos), var(--ep-span-pos), var(--ep-sweep);
+  --ep-sheet-repeat: repeat, repeat, no-repeat;
+  --ep-sheet-blend: overlay;
+  --ep-sheet-opacity: 0.6;
+  --ep-glare-opacity: 0.25;
+}
+
+
+
+/* ==========================================================================
+   WHEN NOT TO DO ANY OF THIS
+   ========================================================================== */
+
+/*
+  Reduced motion: the material stays, the light stops following. Keeping the
+  finish and dropping only the movement is the point - somebody who cannot
+  bear the movement should still be able to tell a foil from a matte.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .ep-fin::before,
+  .ep-fin::after {
+    /* The material stays - a finish with no light on it is a picture of a
+       material rather than one - but the light crawls: the speed limit drops
+       to a quarter of a value a second and the orbit stops entirely (see
+       `lamp.ts`). Nothing here needs pinning for that; what goes is the
+       browser's own hurry. */
+    will-change: auto;
+  }
+}
+
+/* High contrast: the whole layer stands down rather than tinting a system
+   colour it was never asked about. */
+@media (forced-colors: active) {
+  .ep-fin::before,
+  .ep-fin::after {
+    display: none;
+  }
+}
+
+/* -- M1: high-contrast / forced-colors mode -------------------------------- */
+/* Controls that convey state via background or accent colour also get a visible
+   border/outline in Windows High Contrast (forced-colors), where those colours
+   are overridden by the system palette, so state stays perceivable. */
+@media (forced-colors: active) {
+  .ep-section, .ep-chip, .ep-swatch, .ep-roll-box, .ep-cube-face, .ep-solid-edge,
+  .ep-step-btn, .ep-mode-btn, .ep-tool-btn, .ep-edit-toggle { border: 1px solid CanvasText; }
+  /* selected / active / on states must not rely on colour alone */
+  .ep-mode-btn.is-active, .ep-edit-toggle.is-active, .ep-roll-box.ep-pinned,
+  .ep-rating-pip.is-on, .ep-solid-face.ep-solid-on .ep-solid-edge { outline: 2px solid Highlight; outline-offset: -2px; }
+  .ep-rating-pip { forced-color-adjust: auto; }
+  /* The system owns the colours here: the formatting layer stands down. */
+  .ep-fmt { --ep-fmt-bg: transparent; --ep-fmt-fg: currentColor; }
+  .ep-fin::before, .ep-fin::after { display: none; }
+  .ep-sidebar :focus-visible, .ep-table-view :focus-visible, .ep-popup :focus-visible,
+  .ep-entry:focus-visible, .ep-rating:focus-visible, .ep-section-title:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+}
+
+/* Chrome hidden while its feature is disabled (see core/features.ts). */
+.ep-feature-hidden { display: none; }
+
+/* -- date value type (custom calendars) ----------------------------------- */
+/* Doubled deliberately: this must outrank the `display` an element's own
+   class sets (the settings clear button is an inline-flex button). */
+.ep-hidden.ep-hidden { display: none; }
+.ep-era-chip { font-size: var(--font-ui-smaller); color: var(--text-muted); background: var(--background-modifier-hover); border-radius: var(--ep-radius, 4px); padding: 0 5px; cursor: pointer; white-space: nowrap; }
+.ep-era-chip:hover { color: var(--text-normal); }
+.ep-era-chip.ep-era-unset { opacity: 0.55; font-style: italic; }
+/* Same idiom as unresolved links: the multi-value text-decoration
+   shorthand (underline wavy color) is only partially supported by older
+   Obsidian builds, so mark invalid dates with a dotted underline instead. */
+.ep-dateval .ep-invalid { color: var(--text-error); border-bottom: 1px dotted var(--text-error); }
+.ep-dateplot { position: relative; height: 14px; margin: 2px 6px 2px 6px; }
+.ep-dateplot-track { position: absolute; left: 0; right: 0; top: 6px; height: 2px; border-radius: 1px; background: var(--background-modifier-border); }
+.ep-dateplot-tick { position: absolute; top: 0; width: 10px; height: 14px; margin-left: -5px; background: transparent; cursor: pointer; }
+.ep-dateplot-tick::before { content: ""; position: absolute; left: 4px; top: 3px; width: 2px; height: 8px; border-radius: 1px; background: var(--text-faint); }
+.ep-dateplot-tick:hover::before { background: var(--text-normal); }
+.ep-dateplot-tick-multi::before { width: 3px; left: 3.5px; background: var(--text-muted); }
+.ep-dateplot-pop { position: fixed; z-index: var(--layer-menu, 25); min-width: 140px; max-width: 260px; padding: 4px; }
+.ep-dateplot-pop .ep-dateplot-pop-when { padding: 2px 8px 4px; font-size: var(--font-ui-smaller); color: var(--text-muted); border-bottom: 1px solid var(--background-modifier-border); margin-bottom: 2px; }
+.ep-dateplot-pop .ep-pop-row { cursor: pointer; }
+/* The marker layer covers the whole plot, so it lets the pointer through
+   everywhere except on a marker itself - otherwise it would swallow every
+   hover meant for the scale lines beneath it. */
+.ep-dateplot-ticks { position: absolute; inset: 0; pointer-events: none; }
+.ep-dateplot-tick { pointer-events: auto; }
+.ep-dateplot-marker { position: absolute; top: 1px; width: 6px; height: 12px; margin-left: -3px; border-radius: 3px; background: var(--interactive-accent); z-index: 1; pointer-events: none; }
+/* Rows created by responsive column flow get a clear divide (both modes). */
+/* A flow divide marks where COLUMNS mode wrapped - a plain top border on
+   the row's first cell. Grid mode has none: its cells are author-placed, so
+   a measured divide there only flickered as the responsive pass re-ran. */
+.ep-grid.ep-mode-columns > .ep-rowflow { border-top: 2px solid var(--background-modifier-border-hover); padding-top: 8px; margin-top: 4px; }
+
+/* -- number rating + universal Show value ---------------------------------- */
+.ep-rating-strip { display: flex; flex-wrap: wrap; gap: 2px; width: 100%; min-width: 0; padding: 1px 0 3px; }
+.ep-rating-strip.ep-ralign-left { justify-content: flex-start; }
+.ep-rating-strip.ep-ralign-center { justify-content: center; }
+.ep-rating-strip.ep-ralign-right { justify-content: flex-end; }
+.ep-rating-strip.ep-ralign-space { justify-content: space-between; }
+.ep-rating-break { flex-basis: 100%; height: 0; }
+.ep-rating-pip.is-neg { color: var(--text-error); }
+.ep-rating-pip.pip-neg { color: var(--text-error); }
+/* The negative/positive divide is a vertical line, not blank space. The
+   squeezed pip sits on whichever side of zero the value is NOT. */
+.ep-rating-pip.pip-negend { padding-right: 2px; border-right: 1px solid var(--text-faint); }
+.ep-rating-pip.pip-posend { padding-left: 2px; border-left: 1px solid var(--text-faint); }
+/* "Show value" off: the textual value hides, controls stay. */
+.ep-hide-value .ep-cluster .ep-num { display: none; }
+.ep-hide-value .ep-val-right .ep-editable, .ep-hide-value .ep-val-right .ep-num,
+.ep-hide-value .ep-dateval .ep-editable, .ep-hide-value .ep-date-rel, .ep-hide-value .ep-unit-suffix { display: none; }
+
+/* Rating: solid icon fill (where the glyph supports it). */
+.ep-rating-strip.ep-rating-fill .ep-rating-pip svg { fill: currentColor; }
+
+/* Touch multi-select toggle in the section-options tab bar. */
+.ep-tab-multi { display: inline-flex; align-items: center; padding: 2px 6px; opacity: 0.7; }
+.ep-tab-multi.is-active { opacity: 1; color: var(--interactive-accent); }
+.ep-tab-multi svg { width: 14px; height: 14px; }
+
+/* Building-block suffix field: narrow beside the formula. */
+.ep-suffix-input { max-width: 64px; }
+
+/* Staged header shrink: Edit collapses to its icon, then the type badge
+   disappears, instead of the row squeezing or wrapping. */
+.ep-edit-toggle { display: inline-flex; align-items: center; gap: 4px; }
+.ep-edit-toggle .ep-edit-ico { display: none; }
+.ep-edit-toggle .ep-edit-ico svg { width: 14px; height: 14px; }
+.ep-header-tight1 .ep-edit-toggle .ep-edit-ico { display: inline-flex; }
+.ep-header-tight1 .ep-edit-toggle .ep-edit-text { display: none; }
+/* Tight: the chip drops its label and keeps just its icon (every type has
+   one - its own or the configured default), so it never disappears. */
+.ep-header-tight2 .ep-type-badge .ep-type-text { display: none; }
+.ep-header-tight2 .ep-type-badge { padding: 0 4px; }
+/* Tighter still: the chip and Edit wrap onto their own line under the title. */
+.ep-header-tight3 .ep-titlerow { flex-wrap: wrap; row-gap: 4px; }
+.ep-header-tight3 .ep-titlerow .ep-title { flex: 1 0 100%; }
+.ep-header-tight3 .ep-type-badge .ep-type-text { display: inline; }
+.ep-header-tight3 .ep-edit-toggle .ep-edit-text { display: inline; }
+.ep-header-tight3 .ep-edit-toggle .ep-edit-ico { display: none; }
+
+/* Press-and-hold: the charging ring around the cursor + focused entry. */
+.ep-holdring { position: fixed; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; pointer-events: none; z-index: var(--layer-menu, 25);
+  background: conic-gradient(var(--interactive-accent) calc(var(--ep-hold, 0) * 1turn), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px)); }
+.ep-entry.ep-holdfocus { outline: 2px solid var(--interactive-accent); outline-offset: -1px; border-radius: var(--ep-radius, 4px); }
+/* The property-settings popup: the options page, scrollable at the cursor. */
+/* Deliberately below the popover layer. Obsidian's autocomplete list is a
+   body child created at startup - so it precedes this popup in the DOM, and on
+   an equal z-index the popup would paint over it: the list opens, correctly
+   positioned and visible, with the popup on top of it. Sitting one layer lower
+   keeps suggestions, menus, notices and modals in front, and --layer-popover
+   still clears the workspace and both sidebars. */
+.ep-entrysettings { position: fixed; z-index: var(--layer-popover, 30); width: min(280px, 92vw); padding: 0; }
+/* Menu-like: tall, vertically scrollable, never horizontally. */
+/* Icon toolbar mirroring the context menu's actions. */
+.ep-entrysettings .ep-entrysettings-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--background-modifier-border); }
+.ep-entrysettings .ep-entrysettings-bar:empty { display: none; }
+/* The popup holds focus so it can answer Escape; it is not itself a target. */
+.ep-entrysettings:focus, .ep-entrysettings:focus-visible { outline: none; box-shadow: var(--shadow-s); }
+.ep-entrysettings-tool { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; background: transparent; border: none; box-shadow: none; border-radius: 5px; color: var(--text-muted); cursor: pointer; }
+.ep-entrysettings-tool:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* :focus, not :focus-visible - a popup opened by a press is focused
+   programmatically, which the browser does not count as keyboard use. */
+.ep-entrysettings-tool:focus {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+.ep-entrysettings-tool svg { width: 15px; height: 15px; }
+.ep-entrysettings .ep-entrysettings-body { max-height: min(80vh, 640px); overflow-y: auto; overflow-x: hidden; padding: 4px 8px; }
+/* Mobile: this popup replaces the context menu, so it arrives the way menus do
+   there - a sheet along the bottom edge, thumb-sized rows, no cursor to hug. */
+.ep-entrysettings.ep-entrysettings-sheet {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: auto;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 14px 14px 0 0;
+  border-bottom: none;
+  animation: ep-sheet-in .16s ease;
+}
+.ep-entrysettings-sheet.ep-closing { animation: ep-sheet-out .16s ease forwards; }
+.ep-entrysettings-sheet .ep-entrysettings-bar { padding: 8px 10px; gap: 6px; }
+.ep-entrysettings-sheet .ep-entrysettings-tool { width: 38px; height: 38px; }
+.ep-entrysettings-sheet .ep-entrysettings-tool svg { width: 19px; height: 19px; }
+.ep-entrysettings-sheet .ep-entrysettings-body { max-height: 60vh; padding: 4px 12px calc(12px + env(safe-area-inset-bottom, 0px)); }
+@keyframes ep-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes ep-sheet-out { from { transform: translateY(0); } to { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .ep-entrysettings.ep-entrysettings-sheet, .ep-entrysettings-sheet.ep-closing { animation: none; }
+}
+/* Compact options: descriptions hidden, controls stack under their name, and
+   EVERY box measures border-box so a full-width field ends exactly at the
+   card's padding instead of overhanging it. */
+.ep-compactopts, .ep-compactopts * { box-sizing: border-box; }
+.ep-compactopts .setting-item-description { display: none; }
+/* No per-row card: the popup is one surface, the rows are just rows. */
+.ep-compactopts .setting-item { display: block; padding: 3px 0; margin: 0; border: none; width: 100%; background: transparent; box-shadow: none; border-radius: 0; }
+.ep-compactopts .setting-item-info { margin: 0 0 1px; padding: 0; overflow: visible; }
+.ep-compactopts .setting-item-name { font-size: var(--font-ui-smaller); line-height: 1.25; color: var(--text-muted); }
+.ep-compactopts .setting-item-control { justify-content: flex-start; flex-wrap: wrap; gap: 4px; width: 100%; margin: 0; padding: 0; }
+.ep-compactopts .setting-item-control > * { max-width: 100%; margin: 0; }
+.ep-compactopts .setting-item-control input[type="text"],
+.ep-compactopts .setting-item-control input[type="number"],
+.ep-compactopts .setting-item-control input[type="search"],
+.ep-compactopts .setting-item-control textarea,
+.ep-compactopts .setting-item-control select,
+.ep-compactopts .setting-item-control .dropdown { width: 100%; min-width: 0; }
+/* Buttons share a row rather than each taking a full line. */
+.ep-compactopts .setting-item-control button { width: auto; flex: 0 1 auto; }
+/* Group headings match the full property settings: accent colour, small
+   uppercase, with a divider above each group. */
+.ep-compactopts h3, .ep-compactopts h4 { margin: 8px 0 2px; padding: 6px 0 0; font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: .04em; color: var(--text-accent); border-top: 1px solid var(--background-modifier-border); }
+.ep-compactopts h3:first-child, .ep-compactopts h4:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+/* Nested editors (month names, era pools) keep to the card's width. */
+.ep-compactopts .ep-monthnames, .ep-compactopts .ep-erapool { margin: 0; padding: 0; }
+
+/* The type chip's inline editor + its type dropdown. */
+.ep-type-input { max-width: 12em; font-size: var(--font-ui-smaller); }
+.ep-typepick { min-width: 140px; max-height: 40vh; }
+.ep-typepick .ep-pop-row.is-active { color: var(--text-accent); }
+
+/* Type chip icon + the settings-row preview. */
+.ep-type-badge { display: inline-flex; align-items: center; gap: 4px; }
+.ep-type-badge .ep-type-ico { display: inline-flex; }
+.ep-type-badge .ep-type-ico svg { width: 13px; height: 13px; }
+.ep-typeicon-prev { display: inline-flex; align-items: center; margin-left: 6px; vertical-align: -2px; color: var(--text-muted); }
+.ep-typeicon-prev svg { width: 15px; height: 15px; }
+.ep-typeicon-prev.ep-typeicon-default { opacity: .45; }
+/* Rename dialog: the merge warning reads as a consequence, not a note. */
+.ep-rename-warn { color: var(--text-warning, var(--text-accent)); margin: 0 0 4px; }
+
+/* The configured type-property name, wherever it appears in a sentence. */
+.ep-typename { color: var(--text-accent); }
+
+/* -- settings tabs + filter ------------------------------------------------ */
+
+/* Deliberately not sticky. A sticky bar parks at its scroll container's
+   PADDING box - Obsidian's, not ours - so rows scrolled into that strip stay
+   visible above it, and nothing paintable of ours reaches up there to cover
+   them. The bar scrolls with the content instead, and a tab switch scrolls
+   back to it. */
+.ep-settings-chrome {
+  background: var(--background-primary);
+  padding: 8px var(--ep-row-pad-r, 12px) 4px var(--ep-row-pad-l, 12px);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ep-settings-searchrow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.ep-settings-search { flex: 1 1 auto; min-width: 0; box-sizing: border-box; }
+.ep-settings-clear {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ep-settings-clear:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.ep-settings-clear svg { width: 15px; height: 15px; }
+.ep-settings-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.ep-settings-tab {
+  padding: 3px 10px;
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: none;
+}
+.ep-settings-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.ep-settings-tab.is-active {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+/* A tab holds one or more sections, so their headings stay - they are the
+   structure inside the tab, and the grouping for search results. */
+.ep-settings-panel > .setting-item-heading:first-child { padding-top: 4px; border-top: none; }
+.ep-settings-empty { padding: 12px var(--ep-row-pad-l, 12px); }
+
+/* The settings tab draws inside its declarative row: strip the row's own
+   frame so the sections lay out exactly as before. */
+/* No padding of its own: the tab bar starts the tab and brings its own. */
+.ep-settings-host {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+}
+/* Text and controls that are not setting rows still line up with them: the
+   inline padding is measured from a real row (see alignLooseText). */
+.ep-settings-host > p,
+.ep-settings-host > input,
+.ep-settings-host > h3,
+.ep-settings-host > h4,
+.ep-settings-host > h5,
+.ep-settings-host > .setting-item-description,
+.ep-settings-host > div > .setting-item-description,
+/* Since the body became tabs, that loose copy sits one level deeper - inside
+   the section's panel - so the same alignment has to reach it there. */
+.ep-settings-panel > p,
+.ep-settings-panel > input,
+.ep-settings-panel > h3,
+.ep-settings-panel > h4,
+.ep-settings-panel > h5,
+.ep-settings-panel > .setting-item-description,
+.ep-settings-panel > div > .setting-item-description,
+/* The bespoke editors are loose elements too - the palette's scale, and the
+   growing lists - so their fields, buttons and labels line up with the rows
+   above them rather than running to the edge of the window. */
+.ep-settings-host > .ep-scale,
+.ep-settings-host > .ep-mini-list,
+.ep-settings-host > .ep-table-help,
+.ep-settings-panel > .ep-scale,
+.ep-settings-panel > .ep-mini-list,
+.ep-settings-panel > .ep-table-help {
+  padding-left: var(--ep-row-pad-l, var(--size-4-3, 12px));
+  padding-right: var(--ep-row-pad-r, var(--size-4-3, 12px));
+}
+/* The override search field spans the row, minus that padding. */
+.ep-settings-host > input,
+.ep-settings-panel > input { box-sizing: border-box; }
+
+/* -- the section rail, and searching a page of settings -------------------- */
+/* A strip standing beside the popup or the settings window rather than inside
+   it: nothing is covered, no width is taken from the settings themselves, and
+   every section is named in full - a column of unlabelled dots is a puzzle,
+   not a map. */
+.ep-nav {
+  position: fixed; z-index: 10001; display: flex; flex-direction: column; gap: 1px;
+  max-height: 72vh; overflow-y: auto; padding: 6px; width: max-content; max-width: 15em;
+  background: var(--background-secondary); border: 1px solid var(--background-modifier-border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.28);
+}
+.ep-nav-dot {
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  background: transparent; border: none; box-shadow: none; padding: 3px 6px; height: auto;
+  cursor: pointer; color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.3;
+  border-radius: 5px; position: relative;
+}
+/* The line down the strip that makes it a timeline rather than a list. */
+.ep-nav-dot::before {
+  content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 1px;
+  background: var(--background-modifier-border);
+}
+.ep-nav-dot:first-child::before { top: 50%; }
+.ep-nav-dot:last-child::before { bottom: 50%; }
+.ep-nav-mark {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; position: relative; z-index: 1;
+  background: var(--background-modifier-border-hover); margin-left: 2px;
+  box-shadow: 0 0 0 2px var(--background-secondary);
+}
+.ep-nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-nav-dot:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.ep-nav-dot.is-here { color: var(--text-normal); }
+.ep-nav-dot.is-here .ep-nav-mark { background: var(--interactive-accent); }
+/* No room for a strip beside a sheet on a phone. */
+@media (max-width: 720px) { .ep-nav { display: none; } }
+
+/* Arriving somewhere is worth saying out loud - especially when the page had
+   nowhere left to scroll and nothing appeared to happen. */
+@keyframes ep-nav-flash {
+  from { background: var(--text-selection); }
+  to { background: transparent; }
+}
+.ep-nav-flash { animation: ep-nav-flash 1.2s ease-out; border-radius: var(--ep-radius, 6px); }
+@media (prefers-reduced-motion: reduce) { .ep-nav-flash { animation: none; } }
+
+.ep-nav-search { padding: 2px 0 6px; }
+.ep-nav-search-input { width: 100%; }
+/*
+  The controls take the palette's colour.
+
+  A slider's knob and a rating's pips are the value as much as the number is,
+  so a property with a palette says it in that palette rather than in the
+  theme's accent - which belongs to everything and so means nothing here. On a
+  filled row `--ep-fmt-accent` is the measured foreground instead (see
+  `accent()` in render/format.ts), which is why this is one variable and not
+  two rules.
+*/
+.ep-fmt-accented {
+  --ep-accent-default: var(--ep-fmt-accent);
+  --ep-rating-color: var(--ep-fmt-accent);
+}
+.ep-fmt-accented .ep-slider2-knob::before { background: var(--ep-fmt-accent); }
+.ep-fmt-accented .ep-slider2-track {
+  background: color-mix(in oklab, var(--ep-fmt-accent) 55%, transparent);
+}
+.ep-fmt-accented .ep-slider2-rail {
+  background: color-mix(in oklab, var(--ep-fmt-accent) 35%, transparent);
+}
+
+/*
+  On a filled row, EVERYTHING written on it is measured against the fill.
+
+  The value's text already was; so must the scale's lines, the label under the
+  pointer, the unit, the type tag, the modifier chain - anything drawn in a
+  muted grey chosen for the note's background will sink into a strong colour.
+  The doubled class outranks the greys those parts set for themselves; what
+  keeps its own colour is what is saying something the colour cannot, which is
+  a value failing its constraints.
+*/
+.ep-fmt-card.ep-fmt-card,
+.ep-fmt-card.ep-fmt-card :where(span, div, a, small, label, button, td, th, summary) {
+  color: var(--ep-fmt-fg, inherit);
+}
+.ep-fmt-card.ep-fmt-card .ep-tick { background: var(--ep-fmt-fg, currentColor); }
+.ep-fmt-card.ep-fmt-card .ep-slider2-rail {
+  background: color-mix(in oklab, var(--ep-fmt-fg) 35%, transparent);
+}
+.ep-fmt-card.ep-fmt-card .ep-hover-label { color: var(--ep-fmt-fg, inherit); }
+.ep-fmt-card.ep-fmt-card .ep-invalid { color: var(--text-error); }
+
+/*
+  A link inside a formatted value is still the value.
+
+  Hyperlink blue is a colour picked against the note's background, and on a
+  strong fill it is often the one thing on the row that cannot be read - or,
+  beside a palette colour, the one thing that argues with it. So a link takes
+  the same foreground everything else was measured against, whether the colour
+  landed on the row, on a chip or on the text: on text the foreground IS the
+  palette's colour, so the link simply joins in.
+
+  The underline stays and follows the text, as underlines do: a link that is
+  no longer blue still has to be recognisable as a link.
+*/
+.ep-fmt-text.ep-fmt-text :where(a, a:hover, a:focus, a:visited),
+.ep-fmt-chip.ep-fmt-chip :where(a, a:hover, a:focus, a:visited),
+.ep-fmt-card.ep-fmt-card :where(a, a:hover, a:focus, a:visited),
+a.ep-fmt-text.ep-fmt-text,
+a.ep-fmt-chip.ep-fmt-chip,
+a.ep-fmt-card.ep-fmt-card {
+  /* The underline needs no colour of its own: it follows the text, and the
+     text is the foreground the fill was measured for. */
+  color: var(--ep-fmt-fg, inherit);
+}
+/* Except the ones saying something the colour cannot: a link to a note that
+   is not there is worth being told about in the colour of being told. */
+.ep-fmt-text.ep-fmt-text .ep-link-unresolved,
+.ep-fmt-chip.ep-fmt-chip .ep-link-unresolved,
+.ep-fmt-card.ep-fmt-card .ep-link-unresolved,
+.ep-fmt-text.ep-fmt-text .ep-link-unresolved a,
+.ep-fmt-chip.ep-fmt-chip .ep-link-unresolved a,
+.ep-fmt-card.ep-fmt-card .ep-link-unresolved a { color: var(--text-error); }
+
+/* A chip or a value cell inside a row that is wearing a finish.
+
+   The row's material runs behind it, and it shows its own piece of it - moved
+   a little along, so it is plainly a piece lying on the row rather than a
+   window through to it. The hairline is what makes that legible: without an
+   edge, a chip on a foiled row is just a slightly different patch of foil. */
+.ep-fin-cut {
+  border: 1px solid hsl(0 0% 50% / 0.45);
+  border-color: color-mix(in oklab, var(--ep-fmt-fg, currentColor) 40%, transparent);
+}
+
+/* Rows and headings the search has nothing to say for. */
+.ep-options .ep-nav-filtered, .ep-settings-host .ep-nav-filtered,
+.setting-item.ep-nav-filtered { display: none; }

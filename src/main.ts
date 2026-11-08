@@ -1,0 +1,1051 @@
+/**
+ * Plugin entry point - wiring only.
+ *
+ * Owns the long-lived services (settings, i18n, registries, property index,
+ * hide service), registers the view, commands and DOM integrations, and
+ * builds the registries from the core registration plus every enabled
+ * feature module. All behavior lives in the modules this file connects.
+ */
+
+import { Notice, Plugin, TFile } from "obsidian";
+import { I18n, resolveLocaleCode } from "./i18n/i18n";
+import { coreEn } from "./i18n/locales/en";
+import { coreZh } from "./i18n/locales/zh";
+import type { EPSettings, Layout, RollRecord } from "./core/model";
+import { normalizeSettings, runSchemaMigrations } from "./core/settings";
+import { LayoutStore } from "./core/layout-store";
+import { SnapshotStore } from "./core/snapshot-store";
+import { SecretStore } from "./core/secure";
+import { materializeShortForms, registerDerivations } from "./core/influences";
+import { FeatureModule, Registries } from "./core/registry";
+import { PropertyIndex } from "./core/property-index";
+import { renameType, type MergeChoice, type RenameOutcome } from "./core/type-ops";
+import { absorbLegacyTypes } from "./core/layout-ops";
+import { HideService } from "./core/hide-service";
+import { registerCore } from "./ui/render/value-types/index";
+import { featureOn } from "./core/features";
+import { API_VERSION } from "./api";
+import type { ExtendedPropertiesApi } from "./api";
+import { registerDiceIcons } from "./ui/render/dice-icons";
+import { SidebarView, VIEW_TYPE } from "./ui/view";
+import { TableView, VIEW_TYPE_TABLE } from "./ui/table-view";
+import { EPSettingTab } from "./ui/settings-tab";
+import { trackModifiers } from "./ui/modifiers";
+import { TextPromptModal } from "./ui/modals/dialogs";
+import { SnapshotPickerModal } from "./ui/modals/snapshot-picker";
+import { augmentPropsMenu, showPropMenu } from "./ui/menus/prop-panel-menu";
+import { rollingModule } from "./features/rolling/index";
+import { rollingEn, rollingZh } from "./features/rolling/strings";
+import { dnd5eModule } from "./features/dnd5e/index";
+import { dndEn, dndZh } from "./features/dnd5e/strings";
+import { HistoryService, type HistoryStore } from "./features/rolling/history";
+import { configureRollUi } from "./features/rolling/dice-anim";
+import { RollService } from "./features/rolling/roll-service";
+import { runMacro } from "./features/rolling/macros";
+import { setAssignSource } from "./features/rolling/into";
+import { inlineModule, registerInline } from "./features/inline/index";
+import { inlineEn, inlineZh } from "./features/inline/strings";
+import { configureSound } from "./utils/sound";
+import { setSemanticTable } from "./utils/semantic";
+import { anchors } from "./utils/semantic-anchors";
+import { buildTable, readCache } from "./utils/semantic-build";
+import { configureTabChain } from "./ui/components/tab-chain";
+import { installLamp } from "./ui/render/lamp";
+import { NoteFacade } from "./core/note-model";
+
+/**
+ * All available feature modules, in registration order (later modules may
+ * build on earlier ones - dnd5e uses the rolling module's value types).
+ * Adding a feature to the plugin is: create `src/features/<id>/`, export a
+ * {@link FeatureModule}, list it here.
+ */
+const FEATURE_MODULES: FeatureModule[] = [rollingModule, dnd5eModule, inlineModule];
+
+/** How long after a rename the metadata cache is still catching up (ms). */
+const ADOPTION_SETTLE_MS = 1500;
+
+/**
+ * The lines of a file held as bytes, decoded a piece at a time.
+ *
+ * A word-vector file runs to hundreds of megabytes; a JavaScript string tops
+ * out at about half that, so it can never be read whole. This walks the
+ * buffer in chunks, keeps whatever is left over at the end of one chunk to
+ * join the start of the next, and yields complete lines as they appear.
+ */
+function* linesOf(buf: ArrayBuffer, chunk = 1 << 22): Generator<string> {
+  const bytes = new Uint8Array(buf);
+  const decoder = new TextDecoder("utf-8");
+  let rest = "";
+  for (let at = 0; at < bytes.length; at += chunk) {
+    const text = rest + decoder.decode(bytes.subarray(at, Math.min(at + chunk, bytes.length)), { stream: true });
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) !== 10) continue; // \n
+      const end = i > start && text.charCodeAt(i - 1) === 13 ? i - 1 : i; // \r\n
+      if (end > start) yield text.slice(start, end);
+      start = i + 1;
+    }
+    rest = text.slice(start);
+  }
+  if (rest) yield rest;
+}
+
+export default class ExtendedPropertiesPlugin extends Plugin {
+  settings!: EPSettings;
+  readonly i18n = new I18n();
+  readonly registries = new Registries();
+  /** Public, versioned API (F5) - also exposed on `window.ExtendedProperties`. */
+  api!: ExtendedPropertiesApi;
+  /** Third-party feature modules registered through the public API. */
+  private externalModules: FeatureModule[] = [];
+  /** Type-table ribbon icon; hidden while the table feature is disabled. */
+  private tableRibbon: HTMLElement | null = null;
+  /** Optional vault-file layout store (D2); created in onload. */
+  layoutStore?: LayoutStore;
+  private layoutReloadTimer = 0;
+  /** Config history snapshots (L1); created in onload. */
+  snapshotStore?: SnapshotStore;
+  /** Session passphrase + decrypted-value cache for sensitive properties (L1). */
+  readonly secrets = new SecretStore();
+  props!: PropertyIndex;
+  hide!: HideService;
+  /**
+   * While true, a view that meets an unregistered type must leave it alone.
+   * Set during a rename, when the notes and the settings disagree by design.
+   */
+  suspendAdoption = false;
+  /**
+   * Shared safe write path for view-less frontmatter writes (inline chips,
+   * table cells): batched, conflict-guarded, merge-aware. Flushed on unload
+   * so a write sitting in the debounce window is never lost.
+   */
+  facade!: NoteFacade;
+  /** Plugin-level, persistent roll history shared by every view. */
+  history!: HistoryService;
+  /** View-less roll service for macro commands (created on first use). */
+  private rollSvc?: RollService;
+  /** Command ids registered for the current macro set (for clean removal). */
+  private macroCmdIds: string[] = [];
+  /** Signature of the registered macro set; guards needless re-registration. */
+  private macroSig = "";
+
+  /** All known feature modules (enabled or not) - the settings tab lists them. */
+  get featureModules(): FeatureModule[] {
+    return FEATURE_MODULES;
+  }
+
+  async onload(): Promise<void> {
+    this.props = new PropertyIndex(this.app, () => (this.settings?.typeProp ?? "Type").trim() || "Type");
+    registerDiceIcons();
+    trackModifiers(this); // Shift-to-bypass-confirmations power-user shortcut
+
+    // Settings must exist before registries: feature toggles live there.
+    // The default layout depends on registries, so bootstrap in two steps:
+    // build registries assuming defaults, then normalize settings with them.
+    this.i18n.register("en", coreEn, "English");
+    this.i18n.register("zh", coreZh, "简体中文");
+    // Register module dictionaries even while a module is disabled: the
+    // settings tab still lists every module by its translated name.
+    for (const dict of [rollingEn, dndEn, inlineEn]) this.i18n.register("en", dict);
+    for (const dict of [rollingZh, dndZh, inlineZh]) this.i18n.register("zh", dict);
+    // Every string that mentions the note-type concept renders the user's
+    // configured property name instead of a hardcoded "Type".
+    this.i18n.setTypeProp(() => (this.settings?.typeProp ?? "Type").trim() || "Type");
+    // English is the built-in locale; feature modules and API consumers can
+    // register additional dictionaries.
+    let data: unknown = null;
+    try {
+      data = await this.loadData();
+    } catch (e) {
+      // A corrupt data.json must never brick the plugin: fall back to defaults,
+      // but preserve the unreadable file so the user can recover it.
+      console.error("Extended Properties: data.json is unreadable; starting from defaults", e);
+      await this.backupCorruptData();
+    }
+    this.settings = normalizeSettings(data, () => ({ version: 4, sections: [] }));
+    this.rebuildRegistries();
+    // Re-normalize so types missing a layout get the real default preset.
+    this.settings = normalizeSettings(data, () => this.defaultLayout());
+    configureSound(this.settings.sound !== false, this.settings.soundVolume ?? 0.3, {
+      ui: this.settings.soundUi !== false,
+      dice: this.settings.soundDice !== false,
+      crit: this.settings.soundCrit !== false,
+    });
+    // Read through, not copied: the setting can change without a reload.
+    configureTabChain(() => this.settings.tabOpens !== false);
+    this.i18n.setLocale(resolveLocaleCode(this.settings.language));
+    this.i18n.setOverrides(this.settings.stringOverrides);
+    // The roll summary's expandable settings panel edits live settings.
+    configureRollUi(this.settings, () => void this.saveSettings());
+
+    // Let enabled feature modules upgrade settings written by old versions.
+    let migrated = false;
+    for (const mod of FEATURE_MODULES) {
+      if (this.settings.features[mod.id] !== false && mod.migrate?.(this.settings)) migrated = true;
+    }
+    // Give every number/derived property and influence source a unique short form.
+    if (materializeShortForms(this.settings)) migrated = true;
+
+    this.hide = new HideService({
+      settings: this.settings,
+      save: () => void this.saveSettings(),
+      refreshViews: () => this.refreshViews(),
+    });
+    this.register(this.hide.install());
+
+    // Plugin-level roll history (shared by all views; persists across reloads
+    // in its own roll-history.json - see historyStore below).
+    this.history = new HistoryService(
+      this.settings,
+      () => {
+        void this.saveData(this.settings);
+      },
+      this.historyStore()
+    );
+    await this.history.init();
+
+    // -- D3: versioned schema migration + pre-migration backup --------------
+    const isFresh = !data || Object.keys(data).length === 0;
+    if (runSchemaMigrations(this.settings).changed) migrated = true;
+    // Carry user customizations across plugin-version upgrades: stamp the
+    // running version and, on a real upgrade, snapshot data.json even when the
+    // schema is unchanged - so any release can be rolled back to its predecessor.
+    if (this.settings.appVersion !== this.manifest.version) {
+      this.settings.appVersion = this.manifest.version;
+      migrated = true;
+    }
+    if (migrated) {
+      // Snapshot data.json before persisting an upgrade (nothing to back up on a fresh vault).
+      if (!isFresh) await this.backupData(data);
+      await this.saveSettings();
+    }
+
+    // -- D2: optional vault-file layout store --------------------------------
+    this.layoutStore = new LayoutStore(
+      this.app,
+      this.i18n,
+      () => this.settings.layoutVaultFolder ?? "_extended-properties",
+      (k) => this.settings.layouts[k],
+      (k) => this.typeNameFor(k)
+    );
+    if (this.settings.layoutVault === true) {
+      // Vault files are authoritative: load them over the data.json copies.
+      const fromFiles = await this.layoutStore.readAll();
+      for (const k of Object.keys(fromFiles)) {
+        // Written by an older version, so they arrive after the migration:
+        // move any link-typed entries across as the migration would have.
+        absorbLegacyTypes(fromFiles[k].sections ?? []);
+        this.settings.layouts[k] = fromFiles[k];
+      }
+    }
+    this.registerEvent(this.app.vault.on("modify", (f) => this.onLayoutFileEvent(f.path)));
+    this.registerEvent(this.app.vault.on("create", (f) => this.onLayoutFileEvent(f.path)));
+    this.registerEvent(this.app.vault.on("delete", (f) => this.onLayoutFileEvent(f.path)));
+
+    // -- L1: config history snapshots ---------------------------------------
+    this.snapshotStore = new SnapshotStore(
+      this.app,
+      this.i18n,
+      () => this.settings.layoutVaultFolder ?? "_extended-properties",
+      this.manifest.version
+    );
+    if (featureOn(this.settings, "snapshots") && this.settings.snapshots === true &&
+        Date.now() - (this.settings.lastSnapshot ?? 0) > 24 * 3600 * 1000)
+      void this.saveSnapshot(false);
+
+    // -- view, ribbon, commands ---------------------------------------------
+    this.registerView(VIEW_TYPE, (leaf) => new SidebarView(leaf, this));
+    this.addRibbonIcon("panel-right", this.i18n.t("command.openSidebar"), () => this.activateView());
+    this.addCommand({
+      id: "open-character-sidebar",
+      name: this.i18n.t("command.openSidebar"),
+      callback: () => this.activateView(),
+    });
+    this.registerView(VIEW_TYPE_TABLE, (leaf) => new TableView(leaf, this));
+    this.tableRibbon = this.addRibbonIcon("table", this.i18n.t("command.openTable"), () => {
+      if (!featureOn(this.settings, "table")) return;
+      void this.activateTableView();
+    });
+    this.addCommand({
+      id: "open-type-table",
+      name: this.i18n.t("command.openTable"),
+      checkCallback: (checking) => {
+        if (!featureOn(this.settings, "table")) return false;
+        if (!checking) void this.activateTableView();
+        return true;
+      },
+    });
+    this.applyFeatureGates();
+    this.addCommand({
+      id: "hide-property-from-obsidian",
+      name: this.i18n.t("command.hideProperty"),
+      callback: () =>
+        new TextPromptModal(this.app, this.i18n, this.i18n.t("settings.hidePromptTitle"), "", (v) => {
+          const k = v.trim();
+          if (!k) return;
+          this.hide.hideKey(k);
+          new Notice(this.i18n.t("notice.hiding", { key: k }));
+        }, () => this.props.knownProps()).open(),
+    });
+    void this.loadSemanticTable();
+
+    // One lamp per window: the finishes are lit by the pointer, and a popout
+    // is its own document with its own pointer to follow.
+    this.register(installLamp(window));
+    this.registerEvent(
+      this.app.workspace.on("window-open", (win) => this.register(installLamp(win.win)))
+    );
+    this.settingTab = new EPSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
+
+    // -- L1: config snapshot + sensitive-value encryption commands ----------
+    this.addCommand({
+      id: "save-config-snapshot",
+      name: this.i18n.t("snapshot.cmd.save"),
+      checkCallback: (checking) => {
+        if (!featureOn(this.settings, "snapshots")) return false;
+        if (!checking) void this.saveSnapshot(true);
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "restore-config-snapshot",
+      name: this.i18n.t("snapshot.cmd.restore"),
+      checkCallback: (checking) => {
+        if (!featureOn(this.settings, "snapshots")) return false;
+        if (!checking) void this.restoreSnapshotFlow();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "unlock-sensitive",
+      name: this.i18n.t("secure.cmd.unlock"),
+      checkCallback: (checking) => {
+        if (!featureOn(this.settings, "secure")) return false;
+        if (!checking) this.unlockSecrets();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "lock-sensitive",
+      name: this.i18n.t("secure.cmd.lock"),
+      callback: () => {
+        this.secrets.lock();
+        this.refreshViews();
+        new Notice(this.i18n.t("secure.lockedNotice"));
+      },
+    });
+
+    // Rolling commands (the feature may be disabled): export + per-macro.
+    if (this.settings.features["rolling"] !== false) {
+      this.addCommand({
+        id: "export-roll-history",
+        name: this.i18n.t("roll.cmd.exportHistory"),
+        callback: () => void this.exportRollHistory(),
+      });
+    }
+    this.syncMacroCommands();
+
+    // -- inline rolls & properties in note bodies (reading mode) ------------------
+    this.facade = new NoteFacade(this.app, this.i18n, () => this.settings.conflictGuard !== false);
+    registerInline(this, {
+      app: this.app,
+      i18n: this.i18n,
+      settings: this.settings,
+      registries: this.registries,
+      facade: this.facade,
+      roll: this.rollService(),
+      props: this.props,
+      hide: this.hide,
+      history: this.history,
+      save: () => void this.saveSettings(),
+      onSettings: (cb) => this.onSettingsSaved(cb),
+      openSettings: (kind) => this.openInlineSettings(kind),
+      openPalette: (id) => this.openPaletteSettings(id),
+      openMacros: () => this.openMacroSettings(),
+    });
+
+    // Tell roll cards where a total could be put. A card is drawn on a layer
+    // over the whole workspace and knows only its number; this is the one
+    // place that can say which sheet is open behind it.
+    setAssignSource(() => {
+      const file = this.app.workspace.getActiveFile();
+      if (!file) return null;
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        const v = leaf.view;
+        if (v instanceof SidebarView) return { view: v, file };
+      }
+      return null;
+    });
+    this.register(() => setAssignSource(null));
+
+    // Keep the cross-note PropertyIndex cache (perf: avoids a full vault
+    // scan on every sum()/avg()/prop() render) in sync with the vault.
+    // Registered BEFORE the view-refresh handlers below: views read through
+    // this cache, so a changed file must invalidate before any view re-renders.
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => this.props.invalidateFile(file)));
+    this.registerEvent(this.app.vault.on("delete", (file) => this.props.invalidatePath(file.path)));
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (file instanceof TFile) this.props.invalidateFile(file, oldPath);
+        else this.props.invalidatePath(oldPath);
+      })
+    );
+
+    // -- view refresh on workspace / metadata events ---------------------------
+    const refresh = (file?: TFile) => {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        const v = leaf.view;
+        if (v instanceof SidebarView) v.maybeRefresh(file);
+      }
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TABLE)) {
+        const v = leaf.view;
+        if (v instanceof TableView) v.refresh(file);
+      }
+    };
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => refresh()));
+    this.registerEvent(this.app.workspace.on("file-open", () => refresh()));
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => refresh(file)));
+    this.registerEvent(this.app.workspace.on("file-open", () => void this.primeSecrets()));
+
+    // -- Obsidian properties-panel menus -----------------------------------------
+    const host = { app: this.app, i18n: this.i18n, settings: this.settings, hide: this.hide };
+    this.registerDomEvent(activeDocument,
+      "contextmenu",
+      (e: MouseEvent) => {
+        if (!this.settings.propMenu) return;
+        const target = e.target as HTMLElement;
+        const el = target?.closest?.(".metadata-property");
+        if (!el) return;
+        const key = el.getAttribute("data-property-key");
+        if (!key) return;
+        e.preventDefault();
+        e.stopPropagation();
+        showPropMenu(host, e, key);
+      },
+      true
+    );
+    this.registerDomEvent(activeDocument, "contextmenu", (e: MouseEvent) => {
+      if (!this.settings.propMenu) return;
+      const target = e.target as HTMLElement;
+      if (!target?.closest?.(".metadata-properties-heading")) return;
+      window.setTimeout(() => augmentPropsMenu(host), 0);
+    });
+
+    this.exposeApi();
+  }
+
+  // -- public module API (F5) ---------------------------------------------
+
+  /** Build and expose the public API on `this.api` and `window.ExtendedProperties`. */
+  private exposeApi(): void {
+    this.api = {
+      apiVersion: API_VERSION,
+      version: this.manifest.version,
+      register: (module) => this.registerExternalModule(module),
+      t: (key, vars) => this.i18n.t(key, vars),
+    };
+    (window as unknown as Record<string, unknown>).ExtendedProperties = this.api;
+    this.register(() => {
+      if ((window as unknown as Record<string, unknown>).ExtendedProperties === this.api)
+        delete (window as unknown as Record<string, unknown>).ExtendedProperties;
+    });
+  }
+
+  /** @see ExtendedPropertiesApi.register - incorporate a third-party module. */
+  private registerExternalModule(module: FeatureModule): void {
+    if (!module || typeof module.id !== "string" || typeof module.register !== "function") {
+      console.error("Extended Properties: invalid module passed to register()");
+      return;
+    }
+    const declared = (module as { apiVersion?: number }).apiVersion;
+    if (typeof declared === "number" && declared > API_VERSION) {
+      new Notice("A plugin needs a newer Extended Properties API (v" + declared + " > v" + API_VERSION + ").");
+      return;
+    }
+    if (FEATURE_MODULES.some((m) => m.id === module.id) || this.externalModules.some((m) => m.id === module.id)) return;
+    this.externalModules.push(module);
+    this.rebuildRegistries();
+    this.refreshViews();
+  }
+
+  onunload(): void {
+    // Persist any debounced roll-history writes before the plugin goes away.
+    this.history?.flushNow();
+    this.layoutStore?.flushAll();
+    // Inline-chip / table-cell writes still in the debounce window.
+    this.facade?.flushAll();
+  }
+
+  // -- rolling: history export & macro commands -------------------------------
+
+  /** Lazily-created roll service for view-less rolls (macro commands). */
+  /** Lazily-created roll service for view-less rolls (macro commands, table cells). */
+  rollService(): RollService {
+    if (!this.rollSvc) this.rollSvc = new RollService(this.i18n, this.settings, this.history, this.app);
+    return this.rollSvc;
+  }
+
+  /**
+   * Keep exactly one command per saved macro registered, removing commands of
+   * deleted macros. A signature check makes the frequent {@link saveSettings}
+   * caller a no-op unless the macro set actually changed. When the rolling
+   * feature is disabled, all macro commands are removed.
+   */
+  syncMacroCommands(): void {
+    const enabled = this.settings.features["rolling"] !== false;
+    const macros = enabled && Array.isArray(this.settings.macros) ? this.settings.macros : [];
+    const sig = (enabled ? "" : "off|") + macros.map((m) => `${m.id}:${m.name}`).join("|");
+    if (sig === this.macroSig) return;
+    this.macroSig = sig;
+    // removeCommand is not in the public API but is the standard way to drop a
+    // dynamically-registered command; guarded so a future API change can't throw.
+    const cmds = (this.app as unknown as { commands?: { removeCommand?: (id: string) => void } }).commands;
+    for (const id of this.macroCmdIds) cmds?.removeCommand?.(`${this.manifest.id}:${id}`);
+    this.macroCmdIds = [];
+    for (const m of macros) {
+      const cmdId = `roll-macro-${m.id}`;
+      this.addCommand({
+        id: cmdId,
+        name: this.i18n.t("roll.cmd.macroPrefix", { name: m.name }),
+        callback: () => runMacro(this.rollService(), this.i18n, m),
+      });
+      this.macroCmdIds.push(cmdId);
+    }
+  }
+
+  /**
+   * File-backed roll-history store: `roll-history.json` next to `data.json`,
+   * so a settings save never reserializes hundreds of roll records and a
+   * roll never rewrites the whole configuration. Best-effort - errors are
+   * logged, never thrown into the roll path.
+   */
+  private historyStore(): HistoryStore | undefined {
+    const dir = this.manifest.dir;
+    if (!dir) return undefined;
+    const path = `${dir}/roll-history.json`;
+    const adapter = this.app.vault.adapter;
+    return {
+      async load() {
+        if (!(await adapter.exists(path))) return [];
+        const raw: unknown = JSON.parse(await adapter.read(path));
+        return Array.isArray(raw)
+          ? raw.filter(
+              (r): r is RollRecord => !!r && typeof r === "object" && typeof (r as { id?: unknown }).id === "string"
+            )
+          : [];
+      },
+      async save(records) {
+        try {
+          await adapter.write(path, JSON.stringify(records));
+        } catch (e) {
+          console.error("Extended Properties: roll history save failed", e);
+        }
+      },
+    };
+  }
+
+  /** Export the roll history to a new note as a Markdown table. */
+  private async exportRollHistory(): Promise<void> {
+    const md = this.history.exportMarkdown(this.i18n);
+    const base = this.i18n.t("roll.export.fileName");
+    let path = `${base}.md`;
+    let n = 2;
+    while (this.app.vault.getAbstractFileByPath(path)) path = `${base} ${n++}.md`;
+    try {
+      const f = await this.app.vault.create(path, md);
+      await this.app.workspace.getLeaf(true).openFile(f);
+      new Notice(this.i18n.t("roll.export.done"));
+    } catch (err) {
+      new Notice(this.i18n.t("roll.export.failed", { error: String(err) }));
+    }
+  }
+
+  // -- registries -------------------------------------------------------------
+
+  /** Reflect feature toggles in chrome that exists outside the views. */
+  applyFeatureGates(): void {
+    this.tableRibbon?.toggleClass("ep-feature-hidden", !featureOn(this.settings, "table"));
+  }
+
+  /** (Re)build all registries from core + enabled feature modules. */
+  rebuildRegistries(): void {
+    this.registries.clear();
+    const ctx = { i18n: this.i18n, registries: this.registries };
+    registerCore(ctx, this.settings);
+    for (const mod of FEATURE_MODULES) {
+      if (this.settings.features[mod.id] !== false) mod.register(ctx);
+    }
+    for (const mod of this.externalModules) {
+      if (this.settings.features[mod.id] === false) continue;
+      try {
+        mod.register(ctx);
+      } catch (e) {
+        console.error("Extended Properties: external module '" + mod.id + "' failed to register", e);
+      }
+    }
+    // User-editable derivation building blocks (settings -> registry).
+    registerDerivations(this.registries, this.settings);
+  }
+
+  /** Default layout for new note types (preset claimed by features, or empty). */
+  defaultLayout(): Layout {
+    const preset =
+      this.registries.layoutPresets.get(this.registries.defaultPresetId) ?? this.registries.layoutPresets.get("empty");
+    return preset ? preset.build(this.i18n) : { version: 4, sections: [] };
+  }
+
+  // -- settings & layouts --------------------------------------------------------
+
+  /** The settings tab, kept so a note body can open it where it belongs. */
+  private settingTab: EPSettingTab | null = null;
+
+  /**
+   * The wide word table: read it, or build it from a vector file.
+   *
+   * The plugin ships a few hundred words. Anyone wanting the rest of English
+   * drops a word-vector file into the plugin's own folder as `glove.txt` -
+   * GloVe's 2024 vectors, or anything in the same shape - and the table is
+   * built from it ONCE, here, on this machine. What is kept afterwards is
+   * `semantic-en.json`, a plain map of words to colours: no model is loaded,
+   * no weights are bundled, and nothing is ever downloaded.
+   *
+   * The build is redone when the vector file changes, or on request.
+   */
+  async loadSemanticTable(force = false): Promise<number> {
+    const dir = this.manifest.dir;
+    if (!dir) return 0;
+    const fs = this.app.vault.adapter;
+    const cachePath = `${dir}/semantic-en.json`;
+    const vectorPath = `${dir}/glove.txt`;
+    try {
+      const hasVectors = await fs.exists(vectorPath);
+      const hasCache = await fs.exists(cachePath);
+      const stamp = hasVectors ? (await fs.stat(vectorPath))?.size ?? 0 : 0;
+      if (hasCache && !force) {
+        const cached: unknown = JSON.parse(await fs.read(cachePath));
+        const { words, built } = readCache(cached);
+        // A cache built from a different file is stale; anything hand-made
+        // (no stamp of ours) is taken as it is.
+        if (words && (!hasVectors || built === 0 || built === stamp)) {
+          setSemanticTable(words);
+          this.repaintEverything();
+          return Object.keys(words).length;
+        }
+      }
+      if (!hasVectors) {
+        setSemanticTable(null);
+        return 0;
+      }
+      new Notice(this.i18n.t("palette.tableBuilding"));
+      // Read as bytes and decode in pieces. A vector file is commonly several
+      // hundred megabytes - more characters than a JavaScript string is
+      // allowed to hold - so reading it as text throws before a single word
+      // is looked at, which is what "not built" was really reporting.
+      const words = buildTable(linesOf(await fs.readBinary(vectorPath)), anchors());
+      if (!Object.keys(words).length) return 0;
+      await fs.write(cachePath, JSON.stringify({ built: stamp, words }));
+      setSemanticTable(words);
+      this.repaintEverything();
+      return Object.keys(words).length;
+    } catch (e) {
+      console.error("Extended Properties: could not read the word table", e);
+      return 0;
+    }
+  }
+
+  /**
+   * Put a new word table (or any change behind the colours) on screen
+   * everywhere: the sidebar and table views redraw, and the pieces living in
+   * note bodies - which nothing else redraws - are told to repaint too.
+   */
+  repaintEverything(): void {
+    this.refreshViews();
+    for (const cb of this.settingsWatchers) {
+      try {
+        cb();
+      } catch {
+        /* one broken watcher must not stop the rest */
+      }
+    }
+  }
+
+  /**
+   * Open the plugin's settings at the inline piece `kind` - the way from a
+   * chip in a note to the switches that shape it.
+   *
+   * `app.setting` is how Obsidian opens its own settings window; it is not in
+   * the published typings, so it is reached through the shape it has.
+   */
+  openInlineSettings(kind: string): void {
+    this.settingTab?.focusInline(kind);
+    this.openOwnSettings();
+  }
+
+  /** Open the plugin's settings at one palette's own heading. */
+  openPaletteSettings(id: string): void {
+    this.settingTab?.focusPalette(id);
+    this.openOwnSettings();
+  }
+
+  /** Open the plugin's settings at the macros. */
+  openMacroSettings(): void {
+    this.settingTab?.focusMacros();
+    this.openOwnSettings();
+  }
+
+  /** Bring Obsidian's settings window up on this plugin's tab. */
+  private openOwnSettings(): void {
+    const host = this.app as unknown as {
+      setting?: { open?: () => void; openTabById?: (id: string) => void };
+    };
+    host.setting?.open?.();
+    host.setting?.openTabById?.(this.manifest.id);
+  }
+
+  /**
+   * Repainted whenever settings are saved. Inline pieces live in note bodies,
+   * which nothing else redraws - so a setting that changes how they look would
+   * otherwise only take effect the next time the note happened to re-render.
+   */
+  private readonly settingsWatchers = new Set<() => void>();
+
+  /** Watch for saved settings. Returns the unsubscribe. */
+  onSettingsSaved(cb: () => void): () => void {
+    this.settingsWatchers.add(cb);
+    return () => {
+      this.settingsWatchers.delete(cb);
+    };
+  }
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+    configureSound(this.settings.sound !== false, this.settings.soundVolume ?? 0.3, {
+      ui: this.settings.soundUi !== false,
+      dice: this.settings.soundDice !== false,
+      crit: this.settings.soundCrit !== false,
+    });
+    this.hide.update();
+    this.syncMacroCommands();
+    if (this.settings.layoutVault === true && this.layoutStore)
+      for (const t of this.settings.types) this.layoutStore.write(t);
+    for (const cb of [...this.settingsWatchers]) {
+      // One inline piece throwing must not stop the rest repainting.
+      try { cb(); } catch (e) { console.error("Extended Properties: refresh failed", e); }
+    }
+  }
+
+  /**
+   * Snapshot the pre-migration `data.json` to the plugin's `backups/` folder,
+   * keeping the most recent 5. Best-effort - a failure must never block load.
+   */
+  private async backupData(rawData: unknown): Promise<void> {
+    try {
+      if (!this.manifest.dir) return;
+      const dir = `${this.manifest.dir}/backups`;
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await adapter.write(`${dir}/data-${stamp}.json`, JSON.stringify(rawData, null, 2));
+      const listing = await adapter.list(dir);
+      const backups = listing.files.filter((f) => /data-.*\.json$/.test(f)).sort();
+      for (const old of backups.slice(0, Math.max(0, backups.length - 5))) await adapter.remove(old);
+    } catch (e) {
+      console.error("Extended Properties: settings backup failed", e);
+    }
+  }
+
+  /** Copy an unreadable `data.json` aside (raw, not re-serialized) before defaults overwrite it. */
+  private async backupCorruptData(): Promise<void> {
+    try {
+      if (!this.manifest.dir) return;
+      const adapter = this.app.vault.adapter;
+      const path = `${this.manifest.dir}/data.json`;
+      if (!(await adapter.exists(path))) return;
+      const raw = await adapter.read(path);
+      const dir = `${this.manifest.dir}/backups`;
+      if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await adapter.write(`${dir}/data-corrupt-${stamp}.json`, raw);
+    } catch (e) {
+      console.error("Extended Properties: could not back up corrupt data.json", e);
+    }
+  }
+
+  // -- L1: config snapshots & sensitive-value encryption -------------------
+
+  /** Curated customization state to snapshot (everything a user arranges). */
+  private snapshotData(): Record<string, unknown> {
+    const s = this.settings;
+    return {
+      types: s.types,
+      layouts: s.layouts,
+      derivations: s.derivations,
+      sourceAbbrs: s.sourceAbbrs,
+      defaults: s.defaults,
+      critRanges: s.critRanges,
+      macros: s.macros,
+      stringOverrides: s.stringOverrides,
+      features: s.features,
+      modDepth: s.modDepth,
+      modifierSuffix: s.modifierSuffix,
+      tableLayouts: s.tableLayouts,
+    };
+  }
+
+  /** Write a configuration snapshot; `manual` controls the success notice. */
+  async saveSnapshot(manual: boolean): Promise<void> {
+    if (!this.snapshotStore) return;
+    const path = await this.snapshotStore.save(this.snapshotData(), this.settings.snapshotKeep ?? 20);
+    if (path) {
+      this.settings.lastSnapshot = Date.now();
+      await this.saveSettings();
+      if (manual) new Notice(this.i18n.t("snapshot.saved"));
+    }
+  }
+
+  /** Pick a snapshot, back up current settings, then restore it. */
+  async restoreSnapshotFlow(): Promise<void> {
+    if (!this.snapshotStore) return;
+    const snaps = await this.snapshotStore.list();
+    if (!snaps.length) {
+      new Notice(this.i18n.t("snapshot.none"));
+      return;
+    }
+    new SnapshotPickerModal(this.app, this.i18n, snaps, (meta) => {
+      void (async () => {
+        const data = await this.snapshotStore!.read(meta.path);
+        if (!data || typeof data !== "object") return;
+        await this.backupData(this.settings); // insurance before overwrite
+        Object.assign(this.settings, data as Record<string, unknown>);
+        // A snapshot taken before a schema step brings its shape back with it,
+        // and its own (older) schema stamp, so the steps run again over it.
+        runSchemaMigrations(this.settings);
+        await this.saveSettings();
+        if (this.settings.layoutVault === true) await this.layoutStore?.writeAll(this.settings.types);
+        this.rebuildRegistries();
+        this.refreshViews();
+        new Notice(this.i18n.t("snapshot.restored"));
+      })();
+    }).open();
+  }
+
+  /** Prompt for the passphrase, unlock the session, decrypt the active note. */
+  private unlockSecrets(): void {
+    new TextPromptModal(this.app, this.i18n, this.i18n.t("secure.enterPass"), "", (v) => {
+      if (!v) return;
+      this.secrets.unlock(v);
+      void this.primeSecrets();
+      new Notice(this.i18n.t("secure.unlockedNotice"));
+    }).open();
+  }
+
+  /** Decrypt the active note's encrypted values into the cache, then refresh. */
+  async primeSecrets(): Promise<void> {
+    if (!this.secrets.isUnlocked()) return;
+    const file = this.app.workspace.getActiveFile();
+    if (!file) return;
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) return;
+    const n = await this.secrets.prime(Object.values(fm));
+    if (n > 0) this.refreshViews();
+  }
+
+  ensureLayout(typeKey: string): Layout {
+    if (!this.settings.layouts[typeKey]?.sections) this.settings.layouts[typeKey] = this.defaultLayout();
+    return this.settings.layouts[typeKey];
+  }
+
+  resetLayout(typeKey: string): void {
+    this.settings.layouts[typeKey] = this.defaultLayout();
+    void this.saveSettings();
+    this.refreshViews();
+  }
+
+  /**
+   * Forget a type: its layout and icon go, its vault layout file with them.
+   * The notes are left alone - they keep their value, and simply stop matching
+   * a layout, which is recoverable; deleting their frontmatter would not be.
+   */
+  deleteType(name: string): void {
+    const key = name.trim().toLowerCase();
+    this.settings.types = this.settings.types.filter((x) => x.toLowerCase() !== key);
+    delete this.settings.layouts[key];
+    if (this.settings.typeIcons) delete this.settings.typeIcons[key];
+    if (this.settings.layoutVault === true) void this.layoutStore?.remove(key);
+    void this.saveSettings();
+    this.refreshViews();
+  }
+
+  /**
+   * Rename a type and, optionally, the notes that carry its value.
+   *
+   * The two halves must not be observed separately. Between them the settings
+   * say one thing and the notes still say another, and the sidebar adopts any
+   * type it does not recognize - which would silently recreate the type just
+   * renamed away. Adoption is therefore suspended across the whole operation,
+   * and a moment longer: the metadata cache catches up after the writes
+   * resolve, and its events re-render the view.
+   */
+  async renameTypeEverywhere(
+    from: string,
+    to: string,
+    opts: { merge?: MergeChoice; retype?: boolean } = {}
+  ): Promise<{ outcome: RenameOutcome; notes: number }> {
+    this.suspendAdoption = true;
+    try {
+      const outcome = await this.renameType(from, to, opts.merge ?? "replace");
+      if (outcome === "invalid") return { outcome, notes: 0 };
+      const notes = opts.retype ? await this.retypeNotes(from, to) : 0;
+      return { outcome, notes };
+    } finally {
+      window.setTimeout(() => {
+        this.suspendAdoption = false;
+        this.refreshViews();
+      }, ADOPTION_SETTLE_MS);
+      this.refreshViews();
+    }
+  }
+
+  /**
+   * Rename a type, carrying its layout, icon and scoped macros (see
+   * `core/type-ops`). Vault-file layouts are moved too: the old file is
+   * removed and the new key written on the next save. Callers that also
+   * rewrite notes should use {@link renameTypeEverywhere}.
+   */
+  async renameType(from: string, to: string, merge: MergeChoice = "replace"): Promise<RenameOutcome> {
+    const fromKey = from.trim().toLowerCase();
+    const outcome = renameType(this.settings, from, to, merge);
+    if (outcome === "invalid") return outcome;
+    if (this.settings.layoutVault === true && this.layoutStore && fromKey !== to.trim().toLowerCase())
+      await this.layoutStore.remove(fromKey);
+    await this.saveSettings();
+    this.refreshViews();
+    return outcome;
+  }
+
+  /**
+   * Rewrite the type property in every note that currently reads `from`,
+   * so notes follow a renamed type. Lists keep their other values; only the
+   * matching entry changes. Returns how many notes were touched.
+   */
+  async retypeNotes(from: string, to: string): Promise<number> {
+    const prop = (this.settings.typeProp ?? "Type").trim() || "Type";
+    // Case-insensitively, because that is how a value is matched to a layout.
+    const files = this.props.filesWithValue(prop, from, true);
+    const isFrom = (x: unknown): boolean => String(x).toLowerCase() === from.trim().toLowerCase();
+    let n = 0;
+    for (const f of files) {
+      try {
+        await this.app.fileManager.processFrontMatter(f, (fm: Record<string, unknown>) => {
+          const realKey = Object.keys(fm).find((k) => k.toLowerCase() === prop.toLowerCase());
+          if (!realKey) return;
+          const cur = fm[realKey];
+          if (Array.isArray(cur)) {
+            // The values stay unknown: `Array.isArray` widens the list to
+            // any[], and mapping it would otherwise hand back `any`.
+            const next = cur.map((x: unknown): unknown => (isFrom(x) ? to : x));
+            // Renaming onto a value the list already holds must not duplicate it.
+            fm[realKey] = next.filter((x, i) => next.findIndex((y) => String(y) === String(x)) === i);
+            n++;
+          } else if (isFrom(cur)) {
+            fm[realKey] = to;
+            n++;
+          }
+        });
+      } catch (err) {
+        console.error("Extended Properties: retyping failed for", f.path, err);
+      }
+    }
+    this.props.invalidateAll();
+    this.refreshViews();
+    return n;
+  }
+
+  /** Reset the plugin completely: all settings, types and layouts back to their
+   *  defaults. The current `data.json` is backed up first (to the plugin's
+   *  `backups/` folder) so a reset can be recovered. */
+  async resetAll(): Promise<void> {
+    try {
+      await this.backupData(this.settings);
+    } catch (e) {
+      console.error("Extended Properties: pre-reset backup failed", e);
+    }
+    // Mirror onload's two-pass settings bootstrap, but from empty (defaults).
+    this.settings = normalizeSettings(null, () => ({ version: 4, sections: [] }));
+    this.rebuildRegistries();
+    this.settings = normalizeSettings(null, () => this.defaultLayout());
+    await this.saveSettings();
+    this.rebuildRegistries();
+    this.refreshViews();
+  }
+
+  refreshViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      const v = leaf.view;
+      if (v instanceof SidebarView) v.render();
+    }
+  }
+
+  // -- D2: vault-file layouts -------------------------------------------------
+
+  /** Display name for a lower-cased type key (falls back to the key). */
+  private typeNameFor(key: string): string {
+    return this.settings.types.find((t) => t.toLowerCase() === key) ?? key;
+  }
+
+  /** A vault file changed - if it's one of our layout files (not our echo), reload (debounced). */
+  private onLayoutFileEvent(path: string): void {
+    if (this.settings.layoutVault !== true || !this.layoutStore) return;
+    if (!this.layoutStore.owns(path) || this.layoutStore.isEcho(path)) return;
+    window.clearTimeout(this.layoutReloadTimer);
+    this.layoutReloadTimer = window.setTimeout(() => void this.reloadVaultLayouts(), 300);
+  }
+
+  /** Re-read layout files into memory (files win) and refresh open views. */
+  async reloadVaultLayouts(): Promise<void> {
+    if (!this.layoutStore) return;
+    const fromFiles = await this.layoutStore.readAll();
+    for (const k of Object.keys(fromFiles)) this.settings.layouts[k] = fromFiles[k];
+    await this.saveData(this.settings);
+    this.refreshViews();
+    new Notice(this.i18n.t("layoutStore.reloaded", { n: String(Object.keys(fromFiles).length) }));
+  }
+
+  /** Turn on vault-file storage, exporting current layouts to files. */
+  async enableLayoutVault(): Promise<void> {
+    this.settings.layoutVault = true;
+    await this.saveSettings();
+    if (this.layoutStore) await this.layoutStore.writeAll(this.settings.types);
+    new Notice(this.i18n.t("layoutStore.enabled"));
+  }
+
+  /** Turn off vault-file storage (layouts stay in data.json; the files remain). */
+  async disableLayoutVault(): Promise<void> {
+    this.settings.layoutVault = undefined;
+    await this.saveSettings();
+    new Notice(this.i18n.t("layoutStore.disabled"));
+  }
+
+  // -- view activation --------------------------------------------------------------
+
+  async activateView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
+    if (!leaf) {
+      const right = workspace.getRightLeaf(false);
+      if (!right) return;
+      leaf = right;
+      await leaf.setViewState({ type: VIEW_TYPE, active: true });
+    }
+    void workspace.revealLeaf(leaf);
+  }
+
+  /** Open (or focus) the type table view in a main tab. */
+  async activateTableView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_TABLE)[0];
+    const leaf = existing ?? this.app.workspace.getLeaf(true);
+    if (!existing) await leaf.setViewState({ type: VIEW_TYPE_TABLE, active: true });
+    void this.app.workspace.revealLeaf(leaf);
+  }
+}

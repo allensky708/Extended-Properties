@@ -1,0 +1,14 @@
+{
+  "inline.featureName": "行内掷骰与属性",
+  "inline.featureDesc": "在笔记正文（阅读模式）中，将 `roll: 2d6+DEX` 渲染为可点击的掷骰，将 `prop: Strength` 渲染为可实时编辑的值，并提供一个 `ep-sheet` 代码块，用于投射笔记 {typeProp} 布局中的某个分区。",
+  "inline.rollHint": "点击掷骰：{expr}",
+  "inline.rollInvalid": "无效的掷骰表达式。",
+  "inline.propHint": "{key}：点击编辑",
+  "inline.editSource": "编辑源",
+  "inline.editValue": "编辑 {prop} 值",
+  "inline.empty": "-",
+  "inline.sheetNoType": "ep-sheet：此笔记没有匹配的 {typeProp}。",
+  "inline.sheetEmpty": "ep-sheet：没有可显示的内容。",
+  "inline.chartInvalid": "数值不足以绘制图表。",
+  "inline.chartAria": "{kind} 图表：{data}"
+}

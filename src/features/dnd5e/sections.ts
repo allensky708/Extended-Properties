@@ -1,0 +1,280 @@
+/**
+ * D&D section templates and the character layout preset.
+ *
+ * Nothing here is a bespoke widget and nothing is computed by hidden rules:
+ * every value is an ordinary property entry, and every derived number
+ * (proficiency bonus, initiative, saves, skills) is a "derived" entry whose
+ * influences reference *real source properties* by name - Level feeds the
+ * proficiency bonus, abilities feed saves and skills, and proficiency is a
+ * togglable influence backed by the classic list properties
+ * ("Saving Throw Proficiencies" / "Skill Proficiencies").
+ *
+ * Templates declare their source entries via `SectionTemplateDef.sources`,
+ * so adding e.g. only the Skills template also adds any missing ability
+ * scores and the Proficiency Bonus property to refer to.
+ */
+
+import type { I18n } from "../../i18n/i18n";
+import type { LayoutPresetDef, SectionTemplateDef } from "../../core/registry";
+import type { Influence } from "../../core/influences";
+import { Entry, LAYOUT_VERSION, Section } from "../../core/model";
+import { genId } from "../../utils/misc";
+import {
+  ABILITIES, INIT_KEY, LEVEL_KEY, PROF_KEY, SAVE_PROF_KEY, SKILL_PROF_KEY, SKILLS,
+} from "./rules";
+
+/** Shorthand for a property entry. Template properties default to
+ *  visible-when-empty (`hideIfEmpty: false`), so a freshly-applied section shows
+ *  every field ready to fill in; pass `hideIfEmpty: true` in `extra` to override. */
+function prop(key: string, extra: Partial<Entry> = {}): Entry {
+  return { id: genId(), kind: "prop", key, hideIfEmpty: false, ...extra };
+}
+
+/** Shorthand for a derived (computed) property entry. */
+function derived(key: string, mods: Influence[], extra: Partial<Entry> = {}): Entry {
+  return prop(key, { dataType: "derived", hideIfEmpty: false, mods, ...extra });
+}
+
+// -- the shared building-block entries ---------------------------------------
+
+/** Proficiency bonus: a derived property fed by Level. */
+export function profBonusEntry(): Entry {
+  return derived(PROF_KEY, [{ source: LEVEL_KEY, mode: "profBonus" }]);
+}
+
+/** Initiative: a derived property fed by the Dexterity modifier. */
+export function initiativeEntry(): Entry {
+  return derived(INIT_KEY, [{ source: "Dexterity", mode: "abilityMod" }], { roll: true });
+}
+
+/** One saving throw: ability modifier + togglable proficiency. */
+export function saveEntry(ability: string): Entry {
+  return derived(
+    `${ability} Save`,
+    [
+      { source: ability, mode: "abilityMod" },
+      { source: PROF_KEY, toggle: SAVE_PROF_KEY },
+    ],
+    { roll: true, alias: ability }
+  );
+}
+
+/** One skill: ability modifier + togglable proficiency. */
+export function skillEntry(name: string, ability: string): Entry {
+  return derived(
+    name,
+    [
+      { source: ability, mode: "abilityMod" },
+      { source: PROF_KEY, toggle: SKILL_PROF_KEY },
+    ],
+    { roll: true }
+  );
+}
+
+export function savesEntries(): Entry[] {
+  return ABILITIES.map((a) => saveEntry(a.key));
+}
+
+export function skillsEntries(): Entry[] {
+  return SKILLS.map((s) => skillEntry(s.name, s.ability));
+}
+
+/** Ability-score number entry (slider, badge with the ability modifier). */
+function abilityEntry(key: string): Entry {
+  return prop(key, {
+    dataType: "number",
+    slider: true,
+    min: 1,
+    max: 30,
+    clamp: true,
+    roll: true,
+    showMod: true,
+    mods: [{ mode: "abilityMod" }],
+  });
+}
+
+/** Source entries shared by the saves/skills templates. */
+function rollSources(): Entry[] {
+  return [profBonusEntry(), ...ABILITIES.map((a) => prop(a.key, { dataType: "number" }))];
+}
+
+// ---------------------------------------------------------------------------
+// Section templates
+// ---------------------------------------------------------------------------
+
+/**
+ * Template builders, keyed by their stable section id. Ids are persisted in
+ * layouts, which is what makes "reset this template section" possible.
+ */
+const builders: Record<string, (i18n: I18n) => Section> = {
+  rolls: (i18n) => ({
+    id: "rolls",
+    title: i18n.t("dnd.tpl.contents"),
+    columns: 2,
+    layoutMode: "columns",
+    pin: "header",
+    collapsible: true,
+    entries: [{ id: genId(), kind: "toc" }],
+  }),
+  details: (i18n) => ({
+    id: "details",
+    title: i18n.t("dnd.tpl.details"),
+    columns: 1,
+    dividers: true,
+    entries: [prop("Class"), prop("Subclass"), prop("Race"), prop("Background"), prop("Alignment")],
+  }),
+  vitals: (i18n) => ({
+    id: "vitals",
+    title: i18n.t("dnd.tpl.vitals"),
+    columns: 2,
+    layoutMode: "columns",
+    dividers: true,
+    entries: [
+      prop(LEVEL_KEY, { dataType: "number", min: 1, max: 20 }),
+      profBonusEntry(),
+      prop("Armor Class", { dataType: "number", min: 0, max: 40, unit: "AC" }),
+      prop("Speed", { dataType: "number", min: 0, max: 200, unit: "ft" }),
+      prop("Current HP", { dataType: "number", min: 0, max: 9999, unit: "HP" }),
+      prop("Max HP", { dataType: "number", min: 0, max: 9999, unit: "HP" }),
+      prop("Temporary HP", { dataType: "number", min: 0, max: 9999, unit: "HP" }),
+      prop("Hit Dice"),
+      prop("Death Save Successes", { dataType: "number", min: 0, max: 3 }),
+      prop("Death Save Failures", { dataType: "number", min: 0, max: 3 }),
+      prop("Inspiration", { dataType: "checkbox" }),
+      prop("Passive Perception", { dataType: "number", min: 0, max: 40 }),
+      prop("Experience Points", { dataType: "number", min: 0, max: 999999, unit: "XP" }),
+      initiativeEntry(),
+    ],
+  }),
+  abilities: (i18n) => ({
+    id: "abilities",
+    title: i18n.t("dnd.tpl.abilities"),
+    columns: 1,
+    dividers: true,
+    entries: ABILITIES.map((a) => abilityEntry(a.key)),
+  }),
+  saves: (i18n) => ({
+    id: "saves",
+    title: i18n.t("dnd.savingThrows"),
+    columns: 1,
+    dividers: true,
+    entries: savesEntries(),
+  }),
+  skills: (i18n) => ({
+    id: "skills",
+    title: i18n.t("dnd.skills"),
+    columns: 1,
+    dividers: true,
+    entries: skillsEntries(),
+  }),
+  spellcasting: (i18n) => ({
+    id: "spellcasting",
+    title: i18n.t("dnd.tpl.spellcasting"),
+    columns: 2,
+    layoutMode: "columns",
+    dividers: true,
+    entries: [
+      prop("Spellcasting Ability"),
+      prop("Spell Save DC", { dataType: "number", min: 0, max: 40, unit: "DC" }),
+      prop("Spell Attack Bonus", { dataType: "number", min: -5, max: 40 }),
+      prop("Cantrips Known", { dataType: "number", min: 0, max: 30 }),
+    ],
+  }),
+  proficiencies: (i18n) => ({
+    id: "proficiencies",
+    title: i18n.t("dnd.tpl.proficiencies"),
+    columns: 1,
+    dividers: true,
+    entries: [
+      prop("Armor Proficiencies", { dataType: "list" }),
+      prop("Weapon Proficiencies", { dataType: "list" }),
+      prop("Tool Proficiencies", { dataType: "list" }),
+      prop("Languages", { dataType: "list" }),
+    ],
+  }),
+  features: (i18n) => ({
+    id: "features",
+    title: i18n.t("dnd.tpl.features"),
+    columns: 1,
+    entries: [prop("Features & Traits")],
+  }),
+  equipment: (i18n) => ({
+    id: "equipment",
+    title: i18n.t("dnd.tpl.equipment"),
+    columns: 1,
+    dividers: true,
+    entries: [
+      prop("Equipment", { dataType: "list" }),
+      prop("Copper", { dataType: "number", min: 0, unit: "cp" }),
+      prop("Silver", { dataType: "number", min: 0, unit: "sp" }),
+      prop("Electrum", { dataType: "number", min: 0, unit: "ep" }),
+      prop("Gold", { dataType: "number", min: 0, unit: "gp" }),
+      prop("Platinum", { dataType: "number", min: 0, unit: "pp" }),
+    ],
+  }),
+  personality: (i18n) => ({
+    id: "personality",
+    title: i18n.t("dnd.tpl.personality"),
+    columns: 1,
+    dividers: true,
+    entries: [prop("Personality Traits"), prop("Ideals"), prop("Bonds"), prop("Flaws")],
+  }),
+  description: (i18n) => ({
+    id: "description",
+    title: i18n.t("dnd.tpl.description"),
+    columns: 2,
+    layoutMode: "columns",
+    dividers: true,
+    entries: [
+      prop("Age", { dataType: "number", min: 0, unit: "yrs" }),
+      prop("Height", { dataType: "number", fractions: true, min: 0, unit: "ft" }),
+      prop("Weight", { dataType: "number", min: 0, unit: "lb" }),
+      prop("Eyes", { dataType: "color" }),
+      prop("Skin", { dataType: "color" }),
+      prop("Hair", { dataType: "color" }),
+    ],
+  }),
+};
+
+/** Template order shown in the toolbar (matches the preset layout order). */
+const TEMPLATE_ORDER = [
+  "rolls", "details", "description", "vitals", "abilities", "saves", "skills",
+  "spellcasting", "proficiencies", "features", "equipment", "personality",
+];
+
+const TEMPLATE_NAMES: Record<string, string> = {
+  rolls: "dnd.tpl.contents",
+  details: "dnd.tpl.details",
+  description: "dnd.tpl.description",
+  vitals: "dnd.tpl.vitals",
+  abilities: "dnd.tpl.abilities",
+  saves: "dnd.savingThrows",
+  skills: "dnd.skills",
+  spellcasting: "dnd.tpl.spellcasting",
+  proficiencies: "dnd.tpl.proficiencies",
+  features: "dnd.tpl.features",
+  equipment: "dnd.tpl.equipment",
+  personality: "dnd.tpl.personality",
+};
+
+/** Templates whose influences rely on the shared source entries. */
+const NEEDS_SOURCES = new Set(["vitals", "saves", "skills"]);
+
+export function sectionTemplates(): SectionTemplateDef[] {
+  return TEMPLATE_ORDER.map((id) => ({
+    id,
+    name: (i18n: I18n) => i18n.t(TEMPLATE_NAMES[id]),
+    build: (i18n: I18n) => ({ ...builders[id](i18n), hideIfEmpty: false }),
+    sources: NEEDS_SOURCES.has(id) ? () => rollSources() : undefined,
+  }));
+}
+
+/** Full character-sheet layout: every template, in order. */
+export const characterPreset: LayoutPresetDef = {
+  id: "dnd5e-character",
+  name: (i18n) => i18n.t("dnd.presetName"),
+  build: (i18n) => ({
+    version: LAYOUT_VERSION,
+    sections: TEMPLATE_ORDER.map((id) => ({ ...builders[id](i18n), hideIfEmpty: false })),
+  }),
+};

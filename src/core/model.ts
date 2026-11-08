@@ -1,0 +1,631 @@
+/**
+ * Persisted data model.
+ *
+ * These shapes are written to `data.json`, so changes must stay
+ * backward-compatible (see {@link normalizeSettings} in `settings.ts` for
+ * migrations). The model is deliberately open-ended:
+ *
+ * - `Entry.kind` and `Entry.dataType` are plain strings resolved through the
+ *   {@link Registries} at render time, so feature modules can introduce new
+ *   kinds and value types without touching this file.
+ * - Feature modules may persist extra per-entry fields. They access them
+ *   through the `ext()` helper instead of widening the core interface.
+ */
+
+import type { ColorSpace } from "../utils/color";
+import type { ScaleStep } from "../utils/palette";
+import type { Constraints } from "./validate";
+
+/** Height presets used by sections and image entries. */
+export type SectionSize = "s" | "m" | "l" | "unlimited";
+
+/** How a section arranges its entries. */
+export type LayoutMode = "list" | "columns" | "grid";
+
+/** Where a section is pinned while the sidebar scrolls. */
+export type SectionPin = "header" | "body" | "footer";
+
+/** Where an entry's editor draws the values it offers. */
+export interface Choices {
+  /**
+   * Treat the value as the name of a note: render it as a link, and offer
+   * notes while editing. What the "link" data type is, as a switch - so a text
+   * property can be a note reference without being a different type.
+   */
+  linksToNotes?: boolean;
+  /**
+   * Which values a text field offers: those the vault already holds for this
+   * property (unset), or the entry's allowed values.
+   */
+  from?: "vault" | "allowed";
+  /** Vault-relative folders a link property draws its notes from. */
+  folders?: string[];
+  /**
+   * The single folder earlier versions stored. Still read - imported layouts
+   * and old snapshots carry it - but written as `folders` from now on.
+   */
+  folder?: string;
+  /** Whether notes below those folders are offered too. Unset = yes. */
+  subfolders?: boolean;
+  /** Hold the value to something on offer, instead of taking free text. */
+  strict?: boolean;
+  /** Offer to create the note when the typed name matches none. */
+  create?: boolean;
+}
+
+/** Where a property's colour lands: on its text, its value, or the whole row. */
+export type FormatTarget = "text" | "chip" | "card";
+
+/** A finish laid over the colour, and which values get it. */
+export interface FinishRule {
+  /** "all" | "values" | "range". */
+  when: string;
+  /** The values it applies to, for `when: "values"`. */
+  values?: string[];
+  /** The band it applies to, for `when: "range"`. */
+  from?: number;
+  to?: number;
+  /** Finish id from the finish registry. */
+  finish: string;
+  /**
+   * How much of it to show, as a percentage. Unset means 100 - the finish as
+   * it was drawn. Lower is a hint of a material rather than a sheet of it,
+   * which is what most properties actually want: a whole sidebar in full foil
+   * is a fairground.
+   */
+  strength?: number;
+  /** @deprecated the set the withdrawn "one each" rule handed round. */
+  set?: string[];
+  /** Use this colour instead of the palette's. */
+  color?: string;
+}
+
+/**
+ * How a property is coloured: which palette speaks for it, where the colour
+ * lands, and what is laid over the top. Stored per property key (so the
+ * sidebar, the table and inline chips agree), and optionally on one entry
+ * when a single row should look different.
+ */
+export interface FormatRule {
+  /** Palette id, from `settings.palettes`. */
+  palette?: string;
+  target?: FormatTarget;
+  /** "auto" (default) picks a readable foreground; a colour overrides it. */
+  contrast?: string;
+  /**
+   * The finishes this property wears. Unset means the palette's own - a
+   * palette is a look, and a look includes what it is made of.
+   */
+  finishes?: FinishRule[];
+  /**
+   * A scale of this property's own, standing in for the palette's.
+   *
+   * The COLOURS still come from the palette: what is overridden is where each
+   * of them starts and stops. One palette can then dress a dozen properties
+   * that share nothing but a sense of low-to-high - hit points nought to two
+   * hundred, a skill nought to twenty - without a palette each.
+   */
+  scale?: { steps: ScaleStep[]; relative?: boolean };
+  /** Off without forgetting the settings. */
+  off?: boolean;
+}
+
+/** Generic, feature-agnostic fields of a sidebar entry. */
+export interface EntryBase {
+  /** Stable id used for drag & drop and FLIP animations. */
+  id: string;
+  /** Entry kind id, resolved via the entry-kind registry ("prop", "blank", "toc", ...). */
+  kind: string;
+  /** For kind "prop": the frontmatter key this entry shows. */
+  key?: string;
+  /** Optional display label overriding the default. */
+  alias?: string;
+  /** Value type id, resolved via the value-type registry. Unset = derived. */
+  dataType?: string;
+
+  // -- appearance ----------------------------------------------------------
+  icon?: string;
+  iconColor?: string;
+  hideLabel?: boolean;
+  /** Hide the whole entry outside edit mode when the value is empty (default true). */
+  hideIfEmpty?: boolean;
+  /**
+   * Keep this property on show while its section is collapsed. A section shut
+   * away for room can still put its few important values on the title bar's
+   * doorstep - the rest of it stays folded.
+   */
+  showCollapsed?: boolean;
+  /**
+   * This row's own colouring, where it should differ from the property's.
+   * Unset means the property's rule (see `settings.formatProps`).
+   */
+  format?: FormatRule;
+  /** Show the data-type tag beside the label (default true; space permitting). */
+  showType?: boolean;
+  /** Show the modifier chain denotation, e.g. INT + DEX (default true). */
+  showChain?: boolean;
+  /** Show the dice breakdown, e.g. 2d20 (default true). */
+  showDice?: boolean;
+  /** Show the die icon before the dice breakdown (default true). */
+  showDiceIcon?: boolean;
+  /**
+   * Show a menu button at the end of the row outside edit mode too (edit mode
+   * always shows one). Opens this entry's context menu.
+   */
+  menuBtn?: boolean;
+  labelSize?: number;
+  valueSize?: number;
+  labelColor?: string;
+  valueColor?: string;
+
+  // -- numeric value-type options ------------------------------------------
+  slider?: boolean;
+  /** Slider response: "linear" (default), "root", or "exp". */
+  sliderCurve?: string;
+  /** Interval between primary scale lines on the slider / date timeline. */
+  tickMajor?: number;
+  /** Interval between secondary lines; one under a primary is not drawn. */
+  tickMinor?: number;
+  /** Settle a dragged or stepped value on the nearest primary line. */
+  snapPrimary?: boolean;
+  /** Settle it on the nearest secondary line; with both, on whichever is nearer. */
+  snapSecondary?: boolean;
+  /** Hide the -/+ stepper buttons when false (default: shown). */
+  steppers?: boolean;
+  /** Unset min/max default to the property's range across all notes. */
+  min?: number;
+  max?: number;
+  clamp?: boolean;
+  /** Formula value type: expression mapping slider position -> value. */
+  formula?: string;
+
+  /**
+   * Optional unit ("kg", "ft", "%"). On number/decimal entries it renders as
+   * a muted tag beside the property name (like the data-type hint); the
+   * "unit" value type shows the same field beside the value instead.
+   */
+  unit?: string;
+  /** Number type: render the icon rating instead of the slider. */
+  rating?: boolean;
+  /** Rating: balance icons evenly across the rows they need (12 icons in
+   * room for 10 = two rows of 6; off = 10 + 2). */
+  ratingBalance?: boolean;
+  /** Rating icon justification: left (default), center, right, space. */
+  ratingAlign?: "left" | "center" | "right" | "space";
+  /** Rating: fill the icon glyphs solid (where the icon supports it). */
+  ratingFill?: boolean;
+  /** false = hide the textual value (universal; controls stay). */
+  showValue?: boolean;
+
+  // -- other value-type options --------------------------------------------
+  /** Text type: edit in a box that grows with the content (long-form values). */
+  multiline?: boolean;
+  /**
+   * Number type: keep fractions instead of rounding to whole numbers. What
+   * the "decimal" type was, as a switch - so a number can be either. The
+   * setting reads the other way round ("Whole numbers only", on by default),
+   * which is this field unset.
+   */
+  fractions?: boolean;
+  /** Show the fractional part as a fraction (1.5 as 1 and a half). */
+  fracDisplay?: boolean;
+  /** The largest denominator a fraction display may use (default 8). */
+  fracMax?: number;
+  /** Write every fraction over that denominator (6/8) instead of reducing (3/4). */
+  fracKeepDen?: boolean;
+  /**
+   * Write the denominator at all (default yes). Off reads the value as
+   * `<whole><divider><numerator><suffix>` - 2.3" for two and three eighths.
+   */
+  fracShowDen?: boolean;
+  /** What separates whole from numerator when the denominator is hidden ("."). */
+  fracDivider?: string;
+  /** Written after the value, e.g. a units mark. */
+  fracSuffix?: string;
+  /** List chips alignment: "center" | "right" (unset = left). */
+  listAlign?: string;
+  /** Image value type: height preset. */
+  size?: SectionSize;
+  iframeScale?: number;
+  iframeHeight?: number;
+
+  /** Keep this property visible in Obsidian's own properties panel. */
+  showInObsidian?: boolean;
+
+  /** Optional validation constraints (range, regex, allowed values, required). */
+  constraints?: Constraints;
+
+  /**
+   * Where the values on offer come from while editing. A link property that
+   * names a folder suggests only the notes in it - "characters", "locations" -
+   * and `strict` holds the value to one of them.
+   */
+  choices?: Choices;
+
+  /**
+   * Conditional visibility: a boolean expression over the note's values, e.g.
+   * `Class == "Wizard"` or `Level >= 5`. Empty = always shown. Outside edit
+   * mode the entry is hidden when this evaluates false; edit mode shows it
+   * dimmed so the condition stays reachable. Unparseable/unresolved = shown.
+   */
+  showWhen?: string;
+}
+
+/**
+ * An entry as stored on disk. The index signature tolerates fields persisted
+ * by feature modules (e.g. the D&D module's roll settings).
+ */
+export type Entry = EntryBase & Record<string, unknown>;
+
+/**
+ * View an entry through a feature-defined extension interface.
+ * Purely a typing aid - no copying happens.
+ *
+ * @example
+ *   interface RollExt { roll?: RollKind; showMod?: boolean }
+ *   const e = ext<RollExt>(entry); if (e.roll) ...
+ */
+export function ext<T extends object>(entry: Entry): EntryBase & Partial<T> {
+  return entry as EntryBase & Partial<T>;
+}
+
+/** A titled group of entries with its own layout and styling. */
+export interface Section {
+  id: string;
+  title: string;
+  /** Column count for "columns" and "grid" layout modes. */
+  columns: number;
+  /** Layout mode; legacy layouts may omit it (then derived from `columns`). */
+  layoutMode?: LayoutMode;
+  /** Fixed row count (grid mode only). */
+  rows?: number;
+  collapsed?: boolean;
+  entries: Entry[];
+
+  // -- appearance ----------------------------------------------------------
+  accent?: string;
+  bg?: string;
+  /** Color for buttons and list chips inside the section. */
+  controlColor?: string;
+  titleSize?: number;
+  transparent?: boolean;
+  /** Legacy boolean pin (pre-pin-zones): true = pinned below the header. */
+  sticky?: boolean;
+  /**
+   * Pin zone: "header" sticks below the title bar, "footer" sticks above the
+   * view's bottom edge, "body"/unset scrolls normally. Wins over the legacy
+   * `sticky` flag (resolve via {@link sectionPin}). Both zones cap their
+   * height and scroll internally, so pinning many sections can never make
+   * content unreachable on a small window.
+   */
+  pin?: SectionPin;
+  /** Grid: hide fully-empty leading/trailing rows outside edit mode. */
+  trimEmptyRows?: boolean;
+  /** Height preset; scrolls internally when limited. */
+  size?: SectionSize;
+  icon?: string;
+  iconColor?: string;
+  hideLabel?: boolean;
+  collapsible?: boolean;
+  /** Horizontal dividers between entries. */
+  dividers?: boolean;
+  /** Vertical dividers between columns. */
+  vdividers?: boolean;
+  /** Hide the whole section outside edit mode when no entry is visible (default true). */
+  hideIfEmpty?: boolean;
+  /** Conditional visibility for the whole section (see EntryBase.showWhen). */
+  showWhen?: string;
+  /** How the options modal groups this section's property tabs. */
+  tabGroup?: "column" | "row" | "type";
+}
+
+/** Resolve the effective layout mode of a section (legacy fallback). */
+export function sectionMode(section: Section): LayoutMode {
+  return section.layoutMode ?? (section.columns > 1 ? "columns" : "list");
+}
+
+/** Resolve a section's effective pin zone (legacy `sticky` fallback). */
+/** The frontmatter property that selects a note's type (default "Type"). */
+/** The icon for a type: its own, else the configured fallback, else "tag". */
+export function typeIconOf(
+  settings: { typeIcons?: Record<string, string>; defaultTypeIcon?: string },
+  type: string
+): string {
+  const own = settings.typeIcons?.[type.toLowerCase()];
+  return (own ?? settings.defaultTypeIcon ?? "tag").trim() || "tag";
+}
+
+export function typePropOf(settings: { typeProp?: string }): string {
+  return (settings.typeProp ?? "Type").trim() || "Type";
+}
+
+export function sectionPin(section: Section): SectionPin {
+  return section.pin ?? (section.sticky ? "header" : "body");
+}
+
+/** A full sidebar layout. One layout exists per note type. */
+export interface Layout {
+  version: number;
+  sections: Section[];
+}
+
+/** Current layout schema version. */
+export const LAYOUT_VERSION = 4;
+
+/** Defaults applied to newly created properties and sections. */
+export interface Defaults {
+  /** Value type for new properties with no Obsidian-assigned type. */
+  dataType: string;
+  colorSpace: ColorSpace;
+  sectionColumns: number;
+  sectionTransparent: boolean;
+  sectionSticky: boolean;
+  sectionSize: SectionSize;
+  sectionCollapsible: boolean;
+  sectionDividers: boolean;
+  /** Typography. Sizes in px; 0 = theme default. */
+  fontFamily: string;
+  baseSize: number;
+  labelSize: number;
+  valueSize: number;
+  titleSize: number;
+  listSize: number;
+}
+
+/**
+ * One link of a saved roll chain: a dice group ("2d6") or a flat number.
+ * Mirrors the roller widget's segment so a roller chain serializes verbatim
+ * into a macro (and back).
+ */
+export interface RollSeg {
+  dice?: string;
+  add?: number;
+  /** Property reference name (e.g. "DEX") resolved at roll time. */
+  ref?: string;
+  /** This term is subtracted rather than added. */
+  neg?: boolean;
+}
+
+/**
+ * A named, reusable roll - a "custom roll object". Stored vault-globally in
+ * settings; an optional `typeKey` scopes it to one note type. Until the roll
+ * AST lands (roadmap A2) the roll is represented as a segment chain plus the
+ * roller's mode/repeat, which is exactly what the roller widget round-trips.
+ */
+export interface RollMacro {
+  id: string;
+  name: string;
+  segs: RollSeg[];
+  /** "advantage" | "disadvantage"; unset = normal. */
+  mode?: string;
+  /** Simultaneous rolls (unset = 1). */
+  times?: number;
+  /** Lower-cased note-type key this macro is limited to (unset = global). */
+  typeKey?: string;
+}
+
+/**
+ * One persisted roll result. The durable counterpart to the old per-view log
+ * entry: serializable (no closures), so it survives reloads in `data.json`.
+ */
+export interface RollRecord {
+  id: string;
+  /** Epoch milliseconds. */
+  time: number;
+  /** Path of the note the roll was made on (null when none was active). */
+  note: string | null;
+  /** Note basename, kept for display/export without a vault lookup. */
+  noteName?: string;
+  /** Roll label including any advantage/disadvantage tag. */
+  label: string;
+  /** Full roll-chain text (dice, faces, modifier). */
+  text: string;
+  /** Short form: "label: total". */
+  brief: string;
+  total: number;
+  /** RollMode string. */
+  mode: string;
+  tone: "normal" | "crit" | "fail";
+  /** Primary dice notation ("2d6"). */
+  dice?: string;
+}
+
+/** Root settings object persisted to `data.json`. */
+/** A persisted table view (roadmap B3): chosen columns + sort, per type. */
+export interface TableLayout {
+  /** Frontmatter property keys shown as columns, in order. */
+  columns: string[];
+  /** Active sort: property key (empty = by note name) and direction. */
+  sort?: { key: string; dir: "asc" | "desc" };
+  /** User-dragged column widths in px, keyed by property key. */
+  widths?: Record<string, number>;
+}
+
+export interface EPSettings {
+  /** Note `Type` values that activate the sidebar; each has a layout. */
+  types: string[];
+  /** Layouts keyed by lower-cased type name. */
+  layouts: Record<string, Layout>;
+  /** Hide sidebar-shown properties from Obsidian's properties panel. */
+  hideShown: boolean;
+  defaults: Defaults;
+  /** Properties always hidden from Obsidian's panel. */
+  manualHide: string[];
+  /** Replace the right-click menu on Obsidian's properties panel. */
+  propMenu: boolean;
+  /** Warn (keep-mine / take-theirs) instead of overwriting when a note changes on disk mid-edit (default on). */
+  conflictGuard?: boolean;
+  /** UI language ("auto" follows Obsidian, or "en"/"zh"). */
+  language: string;
+  /** True once the user picked a language explicitly (legacy "en" means auto). */
+  languageExplicit?: boolean;
+  /** Per-string user overrides, keyed by i18n string key. */
+  stringOverrides: Record<string, string>;
+  /** Feature modules toggled off by the user (all enabled by default). */
+  features: Record<string, boolean>;
+  /**
+   * User-editable derivation building blocks (id + name + formula in `x`)
+   * available to influences. Seeded with d20-style defaults; see
+   * `core/influences.ts`.
+   */
+  derivations: { id: string; name: string; formula: string; suffix?: string }[];
+  /**
+   * Short-form overrides for modifier denotations, keyed by source
+   * property. Missing keys fall back to the capitalized first three
+   * letters of the property name.
+   */
+  sourceAbbrs: Record<string, string>;
+  /**
+   * Maximum influence chain depth: how many property->property hops are
+   * resolved when derived values feed other derived values.
+   */
+  modDepth: number;
+  /** Play the 3D dice-roll animation before committing roll results. */
+  diceAnim: boolean;
+  /** How many times the dice faces cycle before settling. */
+  diceAnimRolls: number;
+  /** Total roll-animation duration in ms (dice + modifiers stagger within it). */
+  diceAnimMs?: number;
+  /** Per-die roll animation style id: "classic" | "spin" | "3d" (default classic). */
+  diceAnimStyle?: string;
+  /** Anti-alias (supersample) the 3D dice for smoother edges (default on). */
+  dice3dAA?: boolean;
+  /** Play subtle UI / dice / crit sound effects (default on). */
+  sound?: boolean;
+  /** Sound-effect volume, 0-1 (default 0.3). */
+  soundVolume?: number;
+  /** Per-category sound toggles (default on): UI clicks, dice rolls, crit/fail. */
+  soundUi?: boolean;
+  soundDice?: boolean;
+  soundCrit?: boolean;
+  /** Settings schema version (roadmap D3); absent = pre-versioning. */
+  schemaVersion?: number;
+  /**
+   * Plugin version that last wrote these settings. Used to take a one-off
+   * data.json backup on any version change (carry-over insurance), independent
+   * of the schema-version migration table.
+   */
+  appVersion?: string;
+  /** Auto-write a config history snapshot on load when the last is stale (L1; opt-in). */
+  snapshots?: boolean;
+  /** How many config snapshots to keep (default 20). */
+  snapshotKeep?: number;
+  /** Timestamp (ms) of the last config snapshot taken. */
+  lastSnapshot?: number;
+  /** Store layouts as vault files instead of only in data.json (D2; opt-in). */
+  layoutVault?: boolean;
+  /** Vault folder for layout files when `layoutVault` is on. */
+  layoutVaultFolder?: string;
+  /** Persisted type-table views (roadmap B3), keyed by lower-cased type. */
+  tableLayouts?: Record<string, TableLayout>;
+  /** Last type opened in the table view (restored on reopen). */
+  tableLastType?: string;
+  /** Keep roll cards on screen by default (clicking always toggles). */
+  diceAnimStay: boolean;
+  /** Roll cards dim the background and block interaction until dismissed. */
+  diceAnimBlock: boolean;
+  /** Adaptive ("karmic") rolls: failures build luck debt that converts some future failures into successes. */
+  karmicRolls?: boolean;
+  /** List property storing modifiers switched off by clicking their short form. */
+  modsOffProp: string;
+  /** Saved reusable rolls ("custom roll objects"), available on the roll screen and as commands. */
+  macros: RollMacro[];
+  /**
+   * Durable roll history (most-recent-first); pruned to {@link rollHistoryLimit}.
+   * Since v3.8.0 records live in the plugin's own `roll-history.json` (see
+   * `HistoryStore`); this key is migrated once on load and stays empty after,
+   * so settings saves stop reserializing hundreds of records.
+   */
+  rollHistory: RollRecord[];
+  /** Maximum stored history entries before FIFO pruning. */
+  rollHistoryLimit: number;
+  /** Persist roll history across sessions (false = legacy in-memory-only behavior). */
+  rollHistoryEnabled: boolean;
+  /** Per-die crit thresholds: die-size (as string) -> minimum face that counts as a crit. */
+  critRanges: Record<string, number>;
+  /** Treat an all-1s primary dice result as a fail (default true). */
+  failOnOne: boolean;
+  /** Suffix that, appended to a reference, resolves to that property's modifier (default "s"). */
+  modifierSuffix: string;
+  /**
+   * Suffix that, typed after a property name in any key field (`Class.p`),
+   * opens that property's autofill-pool editor (default "p").
+   */
+  poolSuffix?: string;
+  /**
+   * Extra autofill options per property (lower-cased key) - offered by
+   * autocomplete fields even when no note uses them yet.
+   */
+  poolExtras?: Record<string, string[]>;
+  /** Click action on a property: none (default) / menu / settings / focus. */
+  clickAction?: string;
+  /** Double-click action: none (default) / menu / settings / focus. */
+  dblClickAction?: string;
+  /** Press-and-hold action: settings (default) / menu / focus / none. */
+  holdAction?: string;
+  /** Right-click action: menu (default) / settings / focus / none. */
+  rightClickAction?: string;
+  /** Right-click-and-hold action: menu (default) / settings / focus / none. */
+  rightHoldAction?: string;
+  /** Hold duration in ms before the mapped action fires (default 500). */
+  holdMs?: number;
+  /** Tab opens the field it lands on (default true; false = focus only). */
+  tabOpens?: boolean;
+  /**
+   * The unit each quantity is kept in, keyed by quantity ("length", "mass",
+   * ...). A measurement typed into a numeric field is converted into it - so
+   * `1'2"` reads as 14 where length is inches, 35.56 where it is centimetres.
+   */
+  units?: Record<string, string>;
+  /**
+   * The key held to move a slider past its scale lines - and, held with a
+   * click on a line, to send the handle there. "alt" (default), "ctrl",
+   * "shift" or "meta".
+   */
+  freeKey?: string;
+  /**
+   * How each kind of inline piece is drawn in a note body - height in lines,
+   * width and justification - keyed by the token that writes it ("vals",
+   * "radar", ...). See `utils/inline-size`.
+   */
+  inline?: Record<string, import("../utils/inline-size").InlineSize>;
+  /**
+   * How each surface opens a value outside edit mode, keyed by surface id
+   * ("values", "checkboxes", ...): "single" or absent for the double-click
+   * default. See `core/activation`.
+   */
+  activation?: Record<string, string>;
+  /** Per-type icons (Obsidian icon ids), keyed by lower-cased type name. */
+  typeIcons?: Record<string, string>;
+  /** Icon used by types that define none (default "tag"). */
+  defaultTypeIcon?: string;
+  /** Frontmatter property that selects a note's type (default "Type"). */
+  typeProp?: string;
+  /** One-time seed guard for the dnd5e preset pools. */
+  dnd5ePoolsSeeded?: boolean;
+  /** Master switch for cross-note references and aggregates (default on). */
+  crossNote?: boolean;
+  /**
+   * Per-reference entry config for inline `vals:` cards whose property is not
+   * in a note-type layout. Keyed by the reference (lower-cased key, or
+   * `link/key` for cross-note). Lets inline cards carry sliders/rolls/etc.
+   */
+  inlineEntries?: Record<string, Entry>;
+  /**
+   * Vault-wide property data types, keyed by lower-cased property key (v3.10:
+   * a property renders as one type in every note-Type layout, matching
+   * Obsidian's one-type-per-key model). Authoritative for the *type*;
+   * presentation options stay per-entry. Kept in sync with `entry.dataType`
+   * by `setSharedDataType` and the schema-2 migration.
+   */
+  propTypes?: Record<string, string>;
+  /** Per-property (vault-shared) date configs, keyed by lower-cased key. */
+  dateProps?: Record<string, import("./calendar").DateConfig>;
+  /** Named colour palettes, referenced by properties (see `utils/palette`). */
+  palettes?: import("../utils/palette").Palette[];
+  /**
+   * How each property is coloured, keyed by lower-cased property key - so a
+   * property looks the same in the sidebar, the type table and inline.
+   */
+  formatProps?: Record<string, FormatRule>;
+}

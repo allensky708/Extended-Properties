@@ -1,0 +1,96 @@
+/**
+ * The D&D 5e feature module.
+ *
+ * Contributes only data and templates built from generic pieces: saves,
+ * skills, proficiency bonus and initiative are ordinary *derived* property
+ * entries of the core influence engine (with the "abilityMod"/"profBonus"
+ * derivation blocks from settings), roll buttons come from the rolling
+ * module's addon, and the record presets feed the legacy skills type and
+ * its conversion. There are no D&D-specific widgets left.
+ */
+
+import type { Entry, EPSettings } from "../../core/model";
+import type { FeatureContext, FeatureModule } from "../../core/registry";
+import {
+  characterPreset, initiativeEntry, profBonusEntry, savesEntries, sectionTemplates, skillsEntries, } from "./sections";
+import { dndEn, dndZh } from "./strings";
+
+export const dnd5eModule: FeatureModule = {
+  id: "dnd5e",
+  name: (i18n) => i18n.t("dnd.featureName"),
+  description: (i18n) => i18n.t("dnd.featureDesc"),
+
+  register(ctx: FeatureContext): void {
+    ctx.i18n.register("en", dndEn);
+    ctx.i18n.register("zh", dndZh);
+
+
+    for (const tpl of sectionTemplates()) ctx.registries.sectionTemplates.add(tpl);
+    // Registered as an optional preset only - new types always start
+    // empty; the user adds the template sections they want.
+    ctx.registries.layoutPresets.add(characterPreset);
+  },
+
+  /**
+   * Upgrade layouts written by older versions:
+   *
+   * - v2.0 "saves"/"skills" entry kinds become per-record derived property
+   *   entries. Their proficiencies already live in the legacy list
+   *   properties, which are exactly the toggle lists of the new entries,
+   *   so per-note data survives unchanged.
+   * - "computed" entries (proficiency / initiative) become the equivalent
+   *   derived property entries; appearance fields carry over.
+   *
+   * v2.1 record-based skills *properties* keep working through the legacy
+   * skills value type, which offers its own one-click conversion.
+   */
+  migrate(settings: EPSettings): boolean {
+    let changed = false;
+    // Preset autofill pools (Class/Race/Alignment/...), seeded once so the
+    // .p pool editor and value pickers offer the standard options out of the
+    // box. Users can prune them; pruning is not undone on reload.
+    if (!settings.dnd5ePoolsSeeded) {
+      const PRESET_POOLS: Record<string, string[]> = {
+        class: ["Artificer", "Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk", "Paladin", "Ranger", "Rogue", "Sorcerer", "Warlock", "Wizard"],
+        subclass: ["Champion", "Battle Master", "Eldritch Knight", "Thief", "Assassin", "Arcane Trickster", "Life Domain", "Light Domain", "Circle of the Land", "Circle of the Moon", "College of Lore", "College of Valor", "Draconic Bloodline", "Wild Magic", "The Fiend", "School of Evocation", "Oath of Devotion", "Hunter", "Beast Master", "Way of the Open Hand", "Path of the Berserker", "Path of the Totem Warrior"],
+        race: ["Human", "Elf", "Half-Elf", "Dwarf", "Halfling", "Gnome", "Half-Orc", "Tiefling", "Dragonborn", "Aasimar", "Goliath", "Orc", "Tabaxi", "Firbolg", "Kenku", "Genasi"],
+        alignment: ["LG", "NG", "CG", "LN", "N", "CN", "LE", "NE", "CE"],
+        background: ["Acolyte", "Charlatan", "Criminal", "Entertainer", "Folk Hero", "Guild Artisan", "Hermit", "Noble", "Outlander", "Sage", "Sailor", "Soldier", "Urchin"],
+        "spellcasting ability": ["Intelligence", "Wisdom", "Charisma"],
+        languages: ["Common", "Dwarvish", "Elvish", "Giant", "Gnomish", "Goblin", "Halfling", "Orc", "Abyssal", "Celestial", "Draconic", "Deep Speech", "Infernal", "Primordial", "Sylvan", "Undercommon"],
+      };
+      const pools = (settings.poolExtras ??= {});
+      for (const [key, values] of Object.entries(PRESET_POOLS)) {
+        const pool = (pools[key] ??= []);
+        for (const v of values) {
+          if (!pool.some((x) => x.toLowerCase() === v.toLowerCase())) pool.push(v);
+        }
+      }
+      settings.dnd5ePoolsSeeded = true;
+      changed = true;
+    }
+    for (const lk of Object.keys(settings.layouts)) {
+      for (const section of settings.layouts[lk].sections) {
+        const out: Entry[] = [];
+        for (const e of section.entries) {
+          if (e.kind === "saves") {
+            changed = true;
+            out.push(...savesEntries());
+          } else if (e.kind === "skills") {
+            changed = true;
+            out.push(...skillsEntries());
+          } else if (e.kind === "computed") {
+            changed = true;
+            const fresh =
+              (e as Record<string, unknown>)["computed"] === "proficiency" ? profBonusEntry() : initiativeEntry();
+            out.push({ ...e, ...fresh, id: e.id, alias: e.alias, computed: undefined });
+          } else {
+            out.push(e);
+          }
+        }
+        section.entries = out;
+      }
+    }
+    return changed;
+  },
+};
