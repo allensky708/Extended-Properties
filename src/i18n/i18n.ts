@@ -13,6 +13,8 @@
  * `{name}` syntax: `t("note.noType", { note: file.basename })`.
  */
 
+import { getLanguage } from "obsidian";
+
 export type StringDict = Record<string, string>;
 
 /** A locale's identity. The display name is shown in the language dropdown. */
@@ -96,9 +98,16 @@ export function resolveLocaleCode(setting: string): string {
   if (setting && setting !== "auto") return setting;
   let code = "";
   try {
-    code = window.localStorage.getItem("language") ?? "";
+    code = getLanguage() ?? "";
   } catch {
     code = "";
+  }
+  if (!code) {
+    try {
+      code = window.localStorage.getItem("language") ?? "";
+    } catch {
+      code = "";
+    }
   }
   if (!code) code = typeof navigator !== "undefined" ? navigator.language : "en";
   return code.toLowerCase().startsWith("zh") ? "zh" : "en";

@@ -4,7 +4,7 @@
 
 > 一个数据驱动、可自由排布的属性侧边栏，把笔记元数据变成可交互的角色卡、资料面板或仪表盘。
 
-本仓库是 [electroluminescent/obsidian-extended-properties](https://github.com/electroluminescent/obsidian-extended-properties) 的简体中文本地化版本，基于上游 **4.72.0**，版本号 **4.72.1**。界面通过 i18n 字典实现中英双语，默认跟随 Obsidian 语言，也可以在设置中固定为中文或英文。
+本仓库是 [electroluminescent/obsidian-extended-properties](https://github.com/electroluminescent/obsidian-extended-properties) 的简体中文本地化版本，基于上游 **4.72.0**，版本号 **4.72.2**。界面通过 i18n 字典实现中英双语，默认跟随 Obsidian 语言，也可以在设置中固定为中文或英文。
 
 汉化与维护：[allensky708](https://github.com/allensky708)。原项目版权归 electroluminescent 所有，按 MIT 协议发布。
 
@@ -65,7 +65,7 @@ BRAT 会从最新 Release 下载三个文件。
    侧边栏只对匹配已配置类型的笔记生效。没有 Type 时，面板会列出你定义过的类型，并提供一键 **设置类型**。
 3. **编辑布局**：点击面板顶部的 **编辑**，添加分区和属性，拖动 ⠿ 手柄排序，点击分区标题重命名；用 ⋯ 或右键菜单配置属性的数据类型、选项和样式。完成后点 **完成** 保存，或撤销整个编辑会话。
 4. **日常使用（锁定模式）**：勾选复选框、用 − / + 调整数字、拖动滑块、**双击**值就地编辑、右键任意条目打开快捷操作。全部支持键盘操作，详见 [ACCESSIBILITY.md](ACCESSIBILITY.md)。
-5. **切换语言**：**设置 → Extended Properties → 界面 → 界面文本 → 语言**，选择：
+5. **切换语言**：**设置 → Extended Properties → 常规 → 语言**，选择：
    - **跟随 Obsidian**（默认）
    - **English**
    - **简体中文**

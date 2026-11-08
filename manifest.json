@@ -1,7 +1,7 @@
 {
 	"id": "extended-properties",
 	"name": "Extended Properties",
-	"version": "4.72.1",
+	"version": "4.72.2",
 	"minAppVersion": "1.7.2",
 	"description": "可配置的属性侧边栏，支持可排列分区、丰富值类型、公式、掷骰与 D&D 5e 角色卡。A configurable properties sidebar with rich value types, formulas, dice and a D&D 5e sheet.",
 	"author": "electroluminescent",

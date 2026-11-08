@@ -59,6 +59,7 @@ const GLOVE_URL = "https://github.com/stanfordnlp/GloVe#download-pre-trained-wor
  * forgetting to list it here.
  */
 const TAB_GROUPS: { label: string; sections: string[] }[] = [
+  { label: "settings.tab.general", sections: ["settings.generalHeading"] },
   { label: "settings.tab.types", sections: ["settings.typesHeading", "settings.defaultsHeading"] },
   { label: "settings.tab.sections", sections: ["settings.newSectionHeading"] },
   { label: "settings.tab.modifiers", sections: ["settings.derivationsHeading"] },
@@ -86,6 +87,7 @@ const TAB_GROUPS: { label: string; sections: string[] }[] = [
 ];
 
 const SEARCH_SECTIONS = [
+  "settings.generalHeading",
   "settings.typesHeading", "settings.defaultsHeading", "settings.unitsHeading", "settings.inlineHeading",
   "settings.palettesHeading",
   "settings.newSectionHeading",
@@ -461,6 +463,25 @@ export class EPSettingTab extends PluginSettingTab {
     };
     c.empty();
     c.addClass("ep-settings");
+
+    // -- general -------------------------------------------------------------
+    new Setting(c).setName(t("settings.generalHeading")).setHeading();
+    new Setting(c)
+      .setName(t("settings.language"))
+      .setDesc(t("settings.languageDesc"))
+      .addDropdown((d) => {
+        d.addOption("auto", t("settings.languageAuto"));
+        d.addOption("en", t("settings.languageEn"));
+        d.addOption("zh", t("settings.languageZh"));
+        d.setValue(plugin.settings.language || "auto");
+        d.onChange((v) => {
+          plugin.settings.language = v;
+          plugin.settings.languageExplicit = true;
+          save();
+          plugin.i18n.setLocale(resolveLocaleCode(v));
+          this.render();
+        });
+      });
 
     // -- types ---------------------------------------------------------------
     new Setting(c).setName(t("settings.typesHeading")).setHeading();
@@ -1139,22 +1160,6 @@ export class EPSettingTab extends PluginSettingTab {
 
     // -- UI text (per-string overrides; English is the built-in locale) --------------
     new Setting(c).setName(t("settings.languageHeading")).setHeading();
-    new Setting(c)
-      .setName(t("settings.language"))
-      .setDesc(t("settings.languageDesc"))
-      .addDropdown((d) => {
-        d.addOption("auto", t("settings.languageAuto"));
-        d.addOption("en", t("settings.languageEn"));
-        d.addOption("zh", t("settings.languageZh"));
-        d.setValue(plugin.settings.language || "auto");
-        d.onChange((v) => {
-          plugin.settings.language = v;
-          plugin.settings.languageExplicit = true;
-          save();
-          plugin.i18n.setLocale(resolveLocaleCode(v));
-          this.display();
-        });
-      });
     this.renderOverrideEditor(c);
 
     // -- Obsidian integration ----------------------------------------------------------

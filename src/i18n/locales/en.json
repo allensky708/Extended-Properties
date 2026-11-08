@@ -1018,5 +1018,7 @@
   "settings.macroNewName": "New macro",
   "view.createType": "+ New {typeProp}",
   "view.createTypePrompt": "Name the new {typeProp}",
-  "settings.typeIconReset": "Use the default icon"
+  "settings.typeIconReset": "Use the default icon",
+  "settings.generalHeading": "General",
+  "settings.tab.general": "General"
 }

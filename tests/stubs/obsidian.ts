@@ -21,3 +21,5 @@ export class TFolder {}
 export class App {}
 export function setIcon(): void {}
 export const Platform = { isMobile: false, isDesktop: true };
+
+export function getLanguage(): string { return "en"; }

@@ -1018,5 +1018,7 @@
   "settings.macroNewName": "新建宏",
   "view.createType": "+ 新建 {typeProp}",
   "view.createTypePrompt": "为新 {typeProp} 命名",
-  "settings.typeIconReset": "使用默认图标"
+  "settings.typeIconReset": "使用默认图标",
+  "settings.generalHeading": "常规",
+  "settings.tab.general": "常规"
 }

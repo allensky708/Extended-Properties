@@ -2,7 +2,7 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
-> Simplified Chinese localization maintained by [allensky708](https://github.com/allensky708). The UI language selector is under **Settings → Extended Properties → UI text → Language** (Follow Obsidian / English / 简体中文).
+> Simplified Chinese localization maintained by [allensky708](https://github.com/allensky708). The UI language selector is under **Settings → Extended Properties → General → Language** (Follow Obsidian / English / 简体中文).
 
 A data-driven, fully arrangeable property sidebar that transforms how you organize and interact with note metadata. Activate it for any note whose `Type` matches a configured type; each type gets its own custom layout defined visually in the sidebar itself. Works on desktop and mobile.
 
@@ -190,7 +190,7 @@ Share a layout or a single section as a portable JSON snippet. *Export* on a typ
 
 ### Localization & Text Override
 
-**Translatable strings**: The UI ships in English and Simplified Chinese. Pick a language under **Settings → Extended Properties → UI text → Language**, or leave it on **Follow Obsidian**. Missing keys fall back to English at runtime (resolution order: per-string override -> active locale -> English -> humanized key). Additional languages can be registered by feature modules through the plugin's module API.
+**Translatable strings**: The UI ships in English and Simplified Chinese. Pick a language under **Settings → Extended Properties → General → Language**, or leave it on **Follow Obsidian**. Missing keys fall back to English at runtime (resolution order: per-string override -> active locale -> English -> humanized key). Additional languages can be registered by feature modules through the plugin's module API.
 
 **String overrides**: Override any UI text string individually via a searchable editor in Settings -> UI text, without touching code. Useful for domain-specific terminology or personal naming preferences.
 
